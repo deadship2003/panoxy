@@ -39,7 +39,8 @@ func runInstallBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 	}
 	writeSysctl(p)
 	rollback := func() {
-		systemdunit.Stop()
+		systemdunit.StopSvc()
+		systemdunit.Disable()
 		systemdunit.Remove(p)
 		os.Remove(p.Sysctl)
 		setIPForward(prevFwd)
@@ -51,13 +52,15 @@ func runInstallBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 		rollback()
 		return err
 	}
-	if err := systemdunit.EnableNow(); err != nil {
+	if err := systemdunit.Start(); err != nil {
 		rollback()
 		return fmt.Errorf("service failed to start, rolled back")
 	}
-	if err := systemdunit.EnableTimer(); err != nil {
+	// Deployment ends enabled + running (deployment orchestration, not a lifecycle side
+	// effect): registration happens after the service proves healthy.
+	if err := systemdunit.Enable(); err != nil {
 		rollback()
-		return fmt.Errorf("upgrade timer enable failed, rolled back")
+		return fmt.Errorf("auto-start registration failed, rolled back")
 	}
 
 	logx.Step("[4/4] health verification (service+API)")
@@ -161,21 +164,9 @@ clean it up manually first, then retry:
 	return nil
 }
 
-// runUninstall stops the service, clears firewall and units; keeps /opt data and config.
+// runUninstall removes the service registration; keeps /opt data and config.
 func runUninstall(cmd *cobra.Command, args []string) error {
-	return withRootLock(func(p paths.Paths) error { return runUninstallBody(p, cmd, args) })
-}
-
-func runUninstallBody(p paths.Paths, cmd *cobra.Command, args []string) error {
-	systemdunit.Stop()
-	if err := firewall.CleanAll(); err != nil {
-		logx.Warn("firewall cleanup failed: %v (retry uninstall after restart)", err)
-	}
-	systemdunit.Remove(p)
-	os.Remove(p.Sysctl)
-	os.Remove(p.ManGz)
-	logx.Info("uninstalled unit/timer/sysctl/man pages; data dir %s and %s are kept (the CLI itself is kept)", p.Root, p.Conf)
-	return nil
+	return withRootLock(svcUninstall)
 }
 
 // runModeSwitch is an atomic switch: unload old firewall → config variant → -t → restart → new firewall → verify.
@@ -258,7 +249,8 @@ func snapshot(p paths.Paths) deploySnap {
 }
 
 func deployRollback(p paths.Paths, s deploySnap) {
-	systemdunit.Stop()
+	systemdunit.StopSvc()
+	systemdunit.Disable()
 	systemdunit.Remove(p)
 	os.Remove(p.Sysctl)
 	setIPForward(s.prevFwd)

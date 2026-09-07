@@ -67,9 +67,13 @@ func runRedeployBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 	secret := mihomoapi.NewFromConf(p.Conf).Secret
 	logx.Info("redeploy started: in-place CLI/unit refresh (mode %s, %s and subscriptions kept untouched)", mode, p.Conf)
 
-	// [1] Stop the service and explicitly clear the firewall (the new binary may have changed FW rules, can't rely only on restart's ExecStartPost).
+	// [1] Stop the running instance and explicitly clear the firewall (the new binary may
+	// have changed FW rules, can't rely only on restart's ExecStartPost). Boot registration
+	// is untouched — redeploy preserves the prior enablement state.
 	logx.Step("[1/4] stop service and clear firewall rules")
-	systemdunit.Stop()
+	if err := systemdunit.StopSvc(); err != nil {
+		return err
+	}
 	if err := firewall.CleanAll(); err != nil {
 		logx.Warn("firewall cleanup failed: %v (fw apply will cover it after restart)", err)
 	}
@@ -99,11 +103,13 @@ func runRedeployBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 	if err := systemdunit.PortCheck(p.Conf); err != nil {
 		return err
 	}
-	if err := systemdunit.EnableNow(); err != nil {
+	if err := systemdunit.Start(); err != nil {
 		return fmt.Errorf("service failed to start")
 	}
-	if err := systemdunit.EnableTimer(); err != nil {
-		return fmt.Errorf("upgrade timer enable failed")
+	// Re-ensure registration + timer (idempotent): redeploy ends enabled + running, the
+	// same outcome a fresh deploy reaches.
+	if err := systemdunit.Enable(); err != nil {
+		return fmt.Errorf("auto-start registration failed")
 	}
 
 	// [4] Explicitly re-mount the firewall (new rules) + health verification.

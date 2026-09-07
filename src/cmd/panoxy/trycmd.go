@@ -42,19 +42,29 @@ func runTry(cmd *cobra.Command, args []string) error {
 	defer stopSandboxKernel(pidf)
 	shimScript := fmt.Sprintf(`#!/bin/sh
 # {{PROG}} try sandbox shim (productized e2e): strip tun section and routing-mark when booting the kernel as non-root
-# (TUN device creation / SO_MARK need CAP_NET_ADMIN; a real root deploy has no such limit)
+# (TUN device creation / SO_MARK need CAP_NET_ADMIN; a real root deploy has no such limit).
+# Lifecycle verbs map 1:1 onto the sandbox kernel: start/stop/restart drive the process,
+# enable/disable are registration-only no-ops (there is no real systemd here).
 PIDF=%s
 start_mh() {
   awk '/^tun:/{s=1;next} /^routing-mark:/{next} s && /^[^ \t#]/{s=0} !s{print}' "${{PREFIX}}_CONF" > "${{PREFIX}}_CONF.notun"
   {{PREFIX}}_CONF="${{PREFIX}}_CONF.notun" "${{PREFIX}}_CLI" run >> "${{PREFIX}}_ROOT/run.log" 2>&1 < /dev/null &
   echo $! > "$PIDF"
 }
+kill_mh() { while read p; do kill "$p" 2>/dev/null; done < "$PIDF" 2>/dev/null; : > "$PIDF"; }
+alive_mh() { a=0; while read p; do kill -0 "$p" 2>/dev/null && a=1; done < "$PIDF" 2>/dev/null; [ "$a" = 1 ]; }
 case "$1" in
-  restart|disable) while read p; do kill "$p" 2>/dev/null; done < "$PIDF" 2>/dev/null; : > "$PIDF"
-    [ "$1" = restart ] && { sleep 1; start_mh; } ;;
-  enable) [ "$2" = "--now" ] && [ "$3" = {{PROG}}.service ] && start_mh ;;
-  is-active) alive=0; while read p; do kill -0 "$p" 2>/dev/null && alive=1; done < "$PIDF" 2>/dev/null
-    [ "$alive" = 1 ] && echo active || { echo inactive; exit 3; } ;;
+  start)   [ "$2" = {{PROG}}.service ] && start_mh ;;
+  stop)    [ "$2" = {{PROG}}.service ] && kill_mh ;;
+  restart) [ "$2" = {{PROG}}.service ] && { kill_mh; sleep 1; start_mh; } ;;
+  enable|disable) : ;;  # registration only — never starts/stops anything
+  is-active) alive_mh && echo active || { echo inactive; exit 3; } ;;
+  is-enabled) echo disabled; exit 1 ;;
+  show) if [ "$2" = {{PROG}}.service ]; then
+          if alive_mh; then echo "ActiveState=active"; echo "MainPID=$(tail -n 1 "$PIDF" 2>/dev/null)";
+          else echo "ActiveState=inactive"; fi
+          echo "Result=success"; echo "NRestarts=0"
+        fi ;;
 esac
 exit 0
 `, pidf)

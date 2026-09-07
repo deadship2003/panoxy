@@ -397,7 +397,8 @@ Global flags (every command): `--root <dir>` custom install dir · `--verbose` s
 | `panoxy config [--mode tun\|tproxy] [--secret]` | print the default config template (rootless) |
 | `panoxy check [yaml]` | validate a config with the embedded kernel (read-only) |
 | `sudo panoxy apply-conf <yaml>` | apply a config (hot-reload first, then restart) |
-| `sudo panoxy start` / `stop` / `restart` | start (enable on boot) / stop (disable + clear firewall) / restart (self-heal) |
+| `sudo panoxy start` / `stop` / `restart` | service lifecycle (transient: boot auto-start never changed) |
+| `sudo panoxy service <install\|uninstall\|start\|stop\|restart\|enable\|disable\|status> [--system\|--user] [--json]` | LIF-001 service set: strict transient/registration separation, fixed exit codes, `--json` fixed fields |
 | `sudo panoxy mode [tun\|tproxy]` | view/switch transparent-proxy mode (atomic switch) |
 | `sudo panoxy upgrade [--ui] [--ui-version vX] [--check]` | upgrade the web UI (`--ui` forces a manual re-upgrade) |
 | `sudo panoxy uninstall` | uninstall (data & config preserved) |

@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,24 +10,25 @@ import (
 	"github.com/deadship2003/panoxy/internal/constants"
 )
 
-// e2e 主线:deploy(预置无tun配置)→ sub import 成功/失败/离线 → sub del → mode 配置级切换。
+// e2e mainline: deploy (preset no-tun config) → sub import success/failure/offline →
+// sub del → mode config-level switch → service lifecycle.
 
 func TestE2EDeployWithPresetConf(t *testing.T) {
 	e := newEnv(t)
 	pkg := t.TempDir()
 	buildAssets(t, pkg)
-	// 预置配置(现有配置优先;无 tun,安全)
+	// preset config (existing config wins; no tun — safe on a dev machine)
 	os.WriteFile(e.conf, []byte(noTunConf(t, e.apiPort, e.mixPort, e.dnsPort, false)), 0o644)
 
 	cmd := e.cmd("deploy", "--verbose")
 	cmd.Dir = pkg
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("deploy 失败:\n%s", out)
+		t.Fatalf("deploy failed:\n%s", out)
 	}
 	for _, want := range []string{"geo and ad rules", "web UI", "existing config detected"} {
 		if !strings.Contains(string(out), want) {
-			t.Errorf("deploy 输出缺少 %q:\n%s", want, out)
+			t.Errorf("deploy output missing %q:\n%s", want, out)
 		}
 	}
 	checkFile(t, filepath.Join(e.root, "rule_provider", "HyperADRules-Ads.yaml"))
@@ -34,7 +36,7 @@ func TestE2EDeployWithPresetConf(t *testing.T) {
 	checkFile(t, filepath.Join(e.dir, "cli", constants.ProgName))
 	checkFile(t, filepath.Join(e.dir, "man", constants.ProgName+".1.gz"))
 	if b, _ := os.ReadFile(filepath.Join(e.dir, "state.yaml")); !strings.Contains(string(b), "tun") {
-		t.Errorf("状态文件未写 proxy-mode=tun: %s", b)
+		t.Errorf("state file missing proxy-mode=tun: %s", b)
 	}
 	e.waitAPI(t)
 }
@@ -42,55 +44,56 @@ func TestE2EDeployWithPresetConf(t *testing.T) {
 func TestE2ESetSubFlows(t *testing.T) {
 	e := newEnv(t)
 	os.WriteFile(e.conf, []byte(noTunConf(t, e.apiPort, e.mixPort, e.dnsPort, false)), 0o644)
-	bootSandbox(t, e) // 直接启动内核(sub import 自带重启,先有实例以验证节点数)
+	bootSandbox(t, e) // boot the kernel first (sub import restarts it; a live instance proves node counts)
 	srv := fakeSubServer(t, 4)
 
-	// 1) 可达订阅:成功 + 节点数验证
+	// 1) reachable subscription: success + node-count verification
 	out := e.run(t, "sub", "import", "--name", "main", srv.URL+"/sub?token=ok&sid=x")
 	if !strings.Contains(out, "loaded: 4 nodes") {
-		t.Fatalf("未见节点数报告:\n%s", out)
+		t.Fatalf("node-count report missing:\n%s", out)
 	}
 	if b, _ := os.ReadFile(e.conf); !strings.Contains(string(b), srv.URL+"/sub?token=ok&sid=x") {
-		t.Fatal("URL 未写入配置(含 & 参数)")
+		t.Fatal("URL not written to the config (with & params)")
 	}
 	if b, _ := os.ReadFile(filepath.Join(e.root, "proxies", "main.yaml")); !strings.Contains(string(b), "e2e-0") {
-		t.Fatal("订阅缓存未预置")
+		t.Fatal("subscription cache not preloaded")
 	}
 	if b, _ := os.ReadFile(e.conf); strings.Contains(string(b), `url: "SUB_URL_PLACEHOLDER"`) {
-		t.Fatal("首个真实订阅导入后,占位订阅应自动退场(配置仍含占位 url)")
+		t.Fatal("placeholder subscription should retire after the first real import (config still has the placeholder url)")
 	}
 
-	// 2) 不可达订阅:诚实失败 + 配置零改动
+	// 2) unreachable subscription: honest failure + zero config mutation
 	before, _ := os.ReadFile(e.conf)
 	out = e.runFail(t, "sub", "import", "http://192.0.2.1:9/dead")
 	if !strings.Contains(out, "subscription fetch or validation failed") {
-		t.Fatalf("报错不符:\n%s", out)
+		t.Fatalf("unexpected error output:\n%s", out)
 	}
 	after, _ := os.ReadFile(e.conf)
 	if string(before) != string(after) {
-		t.Fatal("失败路径改动了配置")
+		t.Fatal("the failure path mutated the config")
 	}
 
-	// 3) 离线导入(--file,不联网)
+	// 3) offline import (--file, no network)
 	seed := filepath.Join(e.dir, "seed.yaml")
 	os.WriteFile(seed, []byte("proxies:\n  - name: offline-x\n    type: socks5\n    server: 127.0.0.1\n    port: 1080\n"), 0o644)
 	out = e.run(t, "sub", "import", "--name", "backup", "--file", seed, "https://blocked.example.com/x?token=w")
 	if !strings.Contains(out, "using local subscription file") {
-		t.Fatalf("未见离线导入日志:\n%s", out)
+		t.Fatalf("offline-import log missing:\n%s", out)
 	}
 
-	// 4) sub list:两个订阅都在,单订阅状态可见
+	// 4) sub list: both subscriptions present, per-subscription status visible
 	out = e.run(t, "sub", "list")
 	for _, want := range []string{"main", "backup"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("sub list 缺 %s:\n%s", want, out)
+			t.Fatalf("sub list missing %s:\n%s", want, out)
 		}
 	}
 
-	// 5) 删除最后一个订阅被 -t 拒绝(组失去 use),先删 backup 成功
+	// 5) deleting the last subscription is rejected by -t (the group loses its use);
+	// delete the backup first, which succeeds
 	e.run(t, "sub", "del", "--name", "backup")
 	if b, _ := os.ReadFile(e.conf); strings.Contains(string(b), "backup:") {
-		t.Fatal("backup 未删除")
+		t.Fatal("backup not deleted")
 	}
 }
 
@@ -99,27 +102,30 @@ func TestE2EModeSwitchConfigLevel(t *testing.T) {
 	os.WriteFile(e.conf, []byte(noTunConf(t, e.apiPort, e.mixPort, e.dnsPort, false)), 0o644)
 	bootSandbox(t, e)
 
-	// tun → tproxy:配置出现 tproxy-port、消失 tun;state 写入;失败回滚链不触发
+	// tun → tproxy: tproxy-port appears, tun disappears; state updated; no rollback triggered
 	out := e.run(t, "mode", "tproxy")
 	if !strings.Contains(out, "tproxy") {
-		t.Fatalf("mode 输出异常:\n%s", out)
+		t.Fatalf("unexpected mode output:\n%s", out)
 	}
 	b, _ := os.ReadFile(e.conf)
 	if !strings.Contains(string(b), "tproxy-port: 7893") || strings.Contains(string(b), "\ntun:") {
-		t.Fatalf("配置变体切换失败:\n%s", b)
+		t.Fatalf("config variant switch failed:\n%s", b)
 	}
 	if s, _ := os.ReadFile(filepath.Join(e.dir, "state.yaml")); !strings.Contains(string(s), "tproxy") {
-		t.Fatalf("状态未更新: %s", s)
+		t.Fatalf("state not updated: %s", s)
 	}
-	// tproxy → tun:恢复
+	// tproxy → tun: restore
 	e.run(t, "mode", "tun")
 	b, _ = os.ReadFile(e.conf)
 	if !strings.Contains(string(b), "\ntun:") || strings.Contains(string(b), "tproxy-port") {
-		t.Fatalf("配置未恢复 tun:\n%s", b)
+		t.Fatalf("config not restored to tun:\n%s", b)
 	}
 }
 
-// TestE2EServiceLifecycle 覆盖 start/stop/restart 全生命周期(测试 shim 中 nft/ip 为空操作,防误删真机防火墙)。
+// TestE2EServiceLifecycle covers the strict-semantics lifecycle: transient start/stop/restart,
+// registration-only enable/disable (must never touch the running kernel), the service status
+// fixed fields, and the LIF-001 exit codes (ip/nft are no-op shims here, so the real
+// firewall is never touched).
 func TestE2EServiceLifecycle(t *testing.T) {
 	e := newEnv(t)
 	pkg := t.TempDir()
@@ -129,48 +135,87 @@ func TestE2EServiceLifecycle(t *testing.T) {
 	c := e.cmd("deploy")
 	c.Dir = pkg
 	if out, err := c.CombinedOutput(); err != nil {
-		t.Fatalf("deploy 失败:\n%s", out)
+		t.Fatalf("deploy failed:\n%s", out)
 	}
 	e.waitAPI(t)
 
-	// start 在已 active 的服务上是幂等的(不重复拉起内核)
+	// start on an already-active service is idempotent (no second kernel boot)
 	out := e.run(t, "start")
 	if !strings.Contains(out, "already active") {
-		t.Errorf("start 应报告 already active:\n%s", out)
+		t.Errorf("start should report already active:\n%s", out)
 	}
 
-	// restart:单元重载防火墙(shim 重启内核),health 通过
+	// restart: the unit reloads the firewall (shim restarts the kernel), health passes
 	out = e.run(t, "restart")
 	if !strings.Contains(out, "restarted") {
-		t.Errorf("restart 输出异常:\n%s", out)
+		t.Errorf("unexpected restart output:\n%s", out)
 	}
 	e.waitAPI(t)
 
-	// stop:服务停止 + 防火墙清理
-	out = e.run(t, "stop")
-	if !strings.Contains(out, "stopped") {
-		t.Errorf("stop 输出异常:\n%s", out)
+	// service status --json: fixed fields, running state truthful
+	out = e.run(t, "service", "status", "--json")
+	var st struct {
+		Installed bool   `json:"installed"`
+		Running   bool   `json:"running"`
+		Enabled   bool   `json:"enabled"`
+		Scope     string `json:"scope"`
+		PID       int    `json:"pid"`
+		Platform  string `json:"platformInit"`
+		UnitPath  string `json:"unitPath"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &st); err != nil {
+		t.Fatalf("service status --json not valid JSON:\n%s", out)
+	}
+	if !st.Installed || !st.Running || st.Scope != "system" || st.Platform != "systemd" || st.PID == 0 {
+		t.Errorf("unexpected status fields: %+v", st)
+	}
+	if _, err := os.Stat(st.UnitPath); err != nil {
+		t.Errorf("unitPath does not exist: %s", st.UnitPath)
 	}
 
-	// start 再次拉起:应检测到 inactive 并重新启动
+	// enable/disable are registration-only: the running kernel must survive both
+	e.run(t, "service", "enable")
+	e.run(t, "service", "disable")
+	e.waitAPI(t)
+
+	// --user scope is explicitly unsupported: exit code 4
+	if code := e.exitCode(t, "service", "status", "--user"); code != 4 {
+		t.Errorf("service status --user should exit 4, got %d", code)
+	}
+
+	// stop: service stopped + firewall cleared, boot registration untouched
+	out = e.run(t, "stop")
+	if !strings.Contains(out, "stopped") {
+		t.Errorf("unexpected stop output:\n%s", out)
+	}
+	out = e.run(t, "service", "status", "--json")
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &st); err != nil {
+		t.Fatalf("service status --json not valid JSON:\n%s", out)
+	}
+	if st.Running {
+		t.Errorf("status should report not running after stop: %+v", st)
+	}
+
+	// start brings it back: detects inactive and boots again
 	out = e.run(t, "start")
 	if !strings.Contains(out, "started") {
-		t.Errorf("start(重新拉起) 输出异常:\n%s", out)
+		t.Errorf("unexpected start (re-boot) output:\n%s", out)
 	}
 	e.waitAPI(t)
 }
 
-// bootSandbox 直接经 shim 启动内核(等价 enable --now)。
+// bootSandbox boots the kernel directly through the shim (equivalent to service start).
 func bootSandbox(t *testing.T, e *env) {
 	t.Helper()
-	// CLI 就位(内核内嵌于 panixy,shim 直接 `panixy run`)
+	// CLI in place (kernel embedded in panoxy; the shim runs `panoxy run` directly)
 	os.MkdirAll(filepath.Join(e.dir, "cli"), 0o755)
 	if b, err := os.ReadFile(bin); err != nil {
 		t.Fatal(err)
 	} else if err := os.WriteFile(filepath.Join(e.dir, "cli", constants.ProgName), b, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// geo + ui(-t 与启动需要);先建 ui 目录(顺带创建 e.root),否则 geo 写入会因父目录缺失而失败
+	// geo + ui (needed by -t and boot); create the ui dir first (it also creates e.root),
+	// otherwise the geo copy fails on a missing parent dir
 	os.MkdirAll(filepath.Join(e.root, "ui", "official"), 0o755)
 	geoSrc := geoSrcOr(t)
 	for _, f := range []string{"GeoIP.dat", "GeoSite.dat", "Country.mmdb"} {
@@ -178,11 +223,11 @@ func bootSandbox(t *testing.T, e *env) {
 			os.WriteFile(filepath.Join(e.root, f), b, 0o644)
 		}
 	}
-	e.shim(t, "enable", "--now", constants.ProgName+".service")
+	e.shim(t, "start", constants.ProgName+".service")
 	e.waitAPI(t)
 }
 
-// buildAssets 组装迷你离线包(geo/UI/规则;内核已内嵌于 CLI,不再打包)。
+// buildAssets assembles a mini offline package (geo/UI/rules; the kernel is embedded in the CLI).
 func buildAssets(t *testing.T, pkg string) {
 	t.Helper()
 	for _, d := range []string{"assets/geo", "assets/ui/official", "assets/rule"} {
@@ -201,7 +246,7 @@ func buildAssets(t *testing.T, pkg string) {
 func checkFile(t *testing.T, p string) {
 	t.Helper()
 	if _, err := os.Stat(p); err != nil {
-		t.Errorf("文件缺失: %s", p)
+		t.Errorf("file missing: %s", p)
 	}
 }
 
@@ -212,13 +257,13 @@ func geoSrcOr(t *testing.T) string {
 	}
 	for _, c := range []string{
 		filepath.Join("/opt", constants.ProgName),
-		"/opt/panixy", // 旧版残留
-		homeDir() + "/panixy-e2e",
+		"/opt/panoxy", // legacy leftover name
+		homeDir() + "/panoxy-e2e",
 	} {
 		if _, err := os.Stat(filepath.Join(c, "GeoSite.dat")); err == nil {
 			return c
 		}
 	}
-	t.Fatal("缺 geo 数据(GEO_SRC 可指定,或放 ~/panixy-e2e)")
+	t.Fatal("missing geo data (set GEO_SRC, or place it at ~/panoxy-e2e)")
 	return ""
 }

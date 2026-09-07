@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,7 +35,14 @@ func main() {
 	}
 	if err := NewRootCmd().Execute(); err != nil {
 		logx.Error("%v", err)
-		cleanExit(1)
+		// LIF-001 unified exit codes: an error may carry a specific code (2 privileges,
+		// 3 service operation failed, 4 unsupported scope); everything else is 1.
+		code := 1
+		var ec exitCoder
+		if errors.As(err, &ec) {
+			code = ec.ExitCode()
+		}
+		cleanExit(code)
 	}
 	cleanExit(0)
 }
@@ -69,9 +77,10 @@ Subscription / config:
 
 Daily use:
   panixy status                          # health overview (service/firewall/subscription/egress)
-  sudo panixy start                      # start the service (enable on boot) + load firewall
-  sudo panixy stop                       # stop the service + clear firewall (data kept)
+  sudo panixy start                      # start the service now (transient; boot state untouched)
+  sudo panixy stop                       # stop the service + clear firewall (boot state untouched)
   sudo panixy restart                    # restart the service (self-heals firewall)
+  sudo panixy service enable             # register auto-start on boot (start/stop never change it)
   sudo panixy mode tproxy                # switch to TPROXY (nftables tproxy; needs kernel support)
   sudo panixy upgrade --check            # show what can be upgraded
 
@@ -86,7 +95,9 @@ Commands (all accept --root/--verbose/--debug):
   try [URL]        (init flags) --dir                                                    rootless sandboxed full-install trial
   sub              import [URL] --name --file --group | del --name | list --json        subscription management
   status           --detail -q --json                                                   health overview (service/firewall/sub/egress)
-  start | stop | restart                                                              service lifecycle (enable/disable/self-heal)
+  start | stop | restart                                                              service lifecycle (transient; enable/disable via service)
+  service <install|uninstall|start|stop|restart|enable|disable|status> [--system|--user] [--json]
+                                                                                      LIF-001 lifecycle set (strict transient/registration separation; fixed exit codes)
   mode [tun|tproxy]                                                                     view/switch transparent-proxy mode (atomic)
   upgrade          --ui --ui-version vX --check                                         web-UI upgrade (--ui = manual re-upgrade)
   merge-conf <yaml> --dry-run --dns keep|mine --no-wire --rollback                      overlay-merge a personal config
@@ -117,7 +128,7 @@ Details: panixy man, or man panixy-<command> (after deployment)`,
 	root.AddCommand(
 		cmdInit(), cmdDeploy(), cmdRedeploy(), cmdSub(),
 		cmdTry(), cmdMergeConf(), cmdStatus(), cmdStart(), cmdStop(), cmdRestart(), cmdRun(),
-		cmdMode(), cmdUpgrade(),
+		cmdService(), cmdMode(), cmdUpgrade(),
 		cmdUninstall(), cmdUnits(), cmdLog(), cmdCheck(), cmdApplyConf(), cmdConfig(),
 		cmdFw(), cmdMan(), cmdUpstream(),
 	)

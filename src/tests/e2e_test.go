@@ -1,8 +1,10 @@
-// Package tests 是 Go 版 e2e:以环境变量覆盖 + 假 systemctl + 内嵌内核(panixy run)
-// 驱动编译出的 panixy 单二进制,覆盖 deploy/sub import/del/mode 的全事务链路。
+// Package tests is the Go e2e suite: it drives the compiled panoxy single binary (embedded
+// kernel) through env-var path overrides, a fake systemctl and the in-process kernel,
+// covering the full transaction chains of deploy / sub import / sub del / mode.
 //
-// 安全约束:本机(开发机)不引导 tun 实例(auto-route 会改宿主路由表)——
-// e2e 配置一律去除 tun 段;tun/tproxy 的真机引导验证在网关阶段进行。
+// Safety constraint: the dev machine never boots a tun instance (auto-route would rewrite
+// the host routing table) — e2e configs always strip the tun section; real tun/tproxy
+// gateway boot is verified on the gateway machine.
 package tests
 
 import (
@@ -23,7 +25,7 @@ import (
 )
 
 var (
-	bin    string // 编译出的 panixy(单二进制,内核内嵌)
+	bin    string // the compiled panoxy (single binary, embedded kernel)
 	goTool string
 )
 
@@ -31,15 +33,16 @@ func TestMain(m *testing.M) {
 	var err error
 	goTool, err = exec.LookPath("go")
 	if err != nil {
-		fmt.Println("SKIP: 无 go 工具链")
+		fmt.Println("SKIP: no go toolchain")
 		os.Exit(0)
 	}
-	// geo 来源:GEO_SRC > /opt/<ProgName> > /opt/panixy > 离线包资产(机器清理过 /opt 后仍可测)
+	// geo source resolution: GEO_SRC > /opt/<ProgName> > /opt/panoxy > offline-package assets
+	// (keeps e2e working after the machine's /opt has been cleaned)
 	if os.Getenv("GEO_SRC") == "" {
 		for _, c := range []string{
 			filepath.Join("/opt", constants.ProgName),
-			"/opt/panixy",
-			homeDir() + "/panixy-e2e",
+			"/opt/panoxy",
+			homeDir() + "/panoxy-e2e",
 			constants.ProgName + "-V0.0.1-local-amd64/assets/geo",
 		} {
 			if _, err := os.Stat(filepath.Join(c, "GeoSite.dat")); err == nil {
@@ -48,14 +51,14 @@ func TestMain(m *testing.M) {
 			}
 		}
 	}
-	dir, err := os.MkdirTemp("", "panixy-e2e-bin-")
+	dir, err := os.MkdirTemp("", "panoxy-e2e-bin-")
 	if err != nil {
 		os.Exit(1)
 	}
 	bin = filepath.Join(dir, constants.ProgName)
 	out, err := exec.Command(goTool, "build", "-o", bin, "../cmd/panoxy").CombinedOutput()
 	if err != nil {
-		fmt.Printf("SKIP: 构建 panixy 失败(依赖未拉取?): %s\n%s", err, out)
+		fmt.Printf("SKIP: building panoxy failed (deps not fetched?): %s\n%s", err, out)
 		os.Exit(0)
 	}
 	code := m.Run()
@@ -63,7 +66,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// env 是一套沙箱:路径覆盖 + 假 systemctl/ip/sysctl + 随机端口。
+// env is one sandbox: path overrides + fake systemctl/ip/sysctl/nft + random ports.
 type env struct {
 	t       *testing.T
 	dir     string
@@ -95,29 +98,39 @@ func newEnv(t *testing.T) *env {
 		apiPort: freePort(t), mixPort: freePort(t), dnsPort: freePort(t),
 	}
 	os.MkdirAll(filepath.Join(dir, "bin"), 0o755)
-	// 假 systemctl:restart/enable 启动沙箱内核(pid 按 ROOT 区分),is-active 按 pid 判断
+	// Fake systemctl: start/stop/restart drive the sandbox kernel (pids tracked in PIDF),
+	// is-active judges by pid liveness; enable/disable are registration-only no-ops.
 	shim := filepath.Join(dir, "bin", "systemctl")
 	pidf := filepath.Join(dir, "pid")
 	pfx := constants.EnvPrefix()
 	os.WriteFile(shim, []byte(fmt.Sprintf(`#!/bin/sh
 PIDF=%s
+PROG=%s
 start_mh() {
   nohup "$%s_CLI" run >> "$%s_ROOT/run.log" 2>&1 9>&- &
   echo $! >> "$PIDF"
 }
+kill_mh() { while read p; do kill "$p" 2>/dev/null; done < "$PIDF" 2>/dev/null; : > "$PIDF"; }
+alive_mh() { a=0; while read p; do kill -0 "$p" 2>/dev/null && a=1; done < "$PIDF" 2>/dev/null; [ "$a" = 1 ]; }
 case "$1" in
-  restart) while read p; do kill "$p" 2>/dev/null; done < "$PIDF" 2>/dev/null; : > "$PIDF"; sleep 1; start_mh ;;
-  enable)  [ "$2" = "--now" ] && [ "$3" = %s.service ] && start_mh ;;
-  disable) while read p; do kill "$p" 2>/dev/null; done < "$PIDF" 2>/dev/null; : > "$PIDF" ;;
-  is-active) alive=0; while read p; do kill -0 "$p" 2>/dev/null && alive=1; done < "$PIDF" 2>/dev/null;
-             [ "$alive" = 1 ] && echo active || { echo inactive; exit 3; } ;;
+  start)   [ "$2" = "$PROG.service" ] && start_mh ;;
+  stop)    [ "$2" = "$PROG.service" ] && kill_mh ;;
+  restart) [ "$2" = "$PROG.service" ] && { kill_mh; sleep 1; start_mh; } ;;
+  enable|disable) : ;;
+  is-active) alive_mh && echo active || { echo inactive; exit 3; } ;;
+  is-enabled) echo disabled; exit 1 ;;
+  show) if [ "$2" = "$PROG.service" ]; then
+          if alive_mh; then echo "ActiveState=active"; echo "MainPID=$(tail -n 1 "$PIDF" 2>/dev/null)";
+          else echo "ActiveState=inactive"; fi
+          echo "Result=success"; echo "NRestarts=0"
+        fi ;;
 esac
 exit 0
-`, pidf, pfx, pfx, constants.ProgName)), 0o755)
+`, pidf, constants.ProgName, pfx, pfx)), 0o755)
 	for _, name := range []string{"ip", "sysctl", "nft"} {
 		os.WriteFile(filepath.Join(dir, "bin", name), []byte("#!/bin/sh\nexit 0\n"), 0o755)
 	}
-	// 测试结束回收沙箱内核进程,防泄漏
+	// Reap sandbox kernel processes when the test ends, so nothing leaks.
 	t.Cleanup(func() {
 		if b, err := os.ReadFile(pidf); err == nil {
 			for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
@@ -168,13 +181,13 @@ func (e *env) cmd(args ...string) *exec.Cmd {
 	return cmd
 }
 
-// shim 直调假 systemctl(启动/停止沙箱内核)。
+// shim invokes the fake systemctl directly (to boot/stop the sandbox kernel from the test).
 func (e *env) shim(t *testing.T, args ...string) {
 	t.Helper()
 	cmd := exec.Command(filepath.Join(e.dir, "bin", "systemctl"), args...)
 	cmd.Env = e.envOf()
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("shim %v 失败: %s", args, out)
+		t.Fatalf("shim %v failed: %s", args, out)
 	}
 }
 
@@ -182,7 +195,7 @@ func (e *env) run(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := e.cmd(args...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("panixy %v 失败:\n%s", args, out)
+		t.Fatalf("panoxy %v failed:\n%s", args, out)
 	}
 	return string(out)
 }
@@ -191,17 +204,25 @@ func (e *env) runFail(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := e.cmd(args...).CombinedOutput()
 	if err == nil {
-		t.Fatalf("panixy %v 竟然成功:\n%s", args, out)
+		t.Fatalf("panoxy %v unexpectedly succeeded:\n%s", args, out)
 	}
 	return string(out)
 }
 
-// apiURL 直查沙箱内核 API。
+// exitCode runs a command and returns its process exit code.
+func (e *env) exitCode(t *testing.T, args ...string) int {
+	t.Helper()
+	cmd := e.cmd(args...)
+	_ = cmd.Run()
+	return cmd.ProcessState.ExitCode()
+}
+
+// apiURL hits the sandbox kernel API directly.
 func (e *env) apiURL(path string) string {
 	return fmt.Sprintf("http://127.0.0.1:%d%s", e.apiPort, path)
 }
 
-// waitAPI 等沙箱内核 API 就绪。
+// waitAPI waits for the sandbox kernel API to become ready.
 func (e *env) waitAPI(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -214,10 +235,11 @@ func (e *env) waitAPI(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	log, _ := os.ReadFile(filepath.Join(e.root, "run.log"))
-	t.Fatalf("沙箱内核 API 未就绪\n--- run.log ---\n%s", log)
+	t.Fatalf("sandbox kernel API not ready\n--- run.log ---\n%s", log)
 }
 
-// noTunConf 渲染模板并去掉 tun 段(开发机不引导 tun)+ 换端口 + 固定密钥。
+// noTunConf renders the template with the tun section stripped (the dev machine never
+// boots tun), random ports and a fixed secret.
 func noTunConf(t *testing.T, api, mix, dns int, tproxy bool) string {
 	t.Helper()
 	d := asset.DefaultConfigData()
@@ -228,10 +250,11 @@ func noTunConf(t *testing.T, api, mix, dns int, tproxy bool) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 随机化模板写死的 http/socks 监听端口(本机若已装 panixy,固定 9966/6699 会撞真实网关)
+	// Randomize the template's hard-coded http/socks ports (a real gateway installed on
+	// this machine would collide with the fixed 9966/6699).
 	out = strings.Replace(out, "port: 9966", fmt.Sprintf("port: %d", freePort(t)), 1)
 	out = strings.Replace(out, "socks-port: 6699", fmt.Sprintf("socks-port: %d", freePort(t)), 1)
-	// 去 tun 段(tun: 到下一个顶层键)
+	// Strip the tun section (from "tun:" to the next top-level key).
 	var b strings.Builder
 	skip := false
 	for _, l := range strings.Split(out, "\n") {
@@ -251,7 +274,7 @@ func noTunConf(t *testing.T, api, mix, dns int, tproxy bool) string {
 	return b.String()
 }
 
-// fakeSubServer 模拟机场:任意路径返回 n 节点 Clash YAML。
+// fakeSubServer emulates an airport: any path returns a Clash YAML with n nodes.
 func fakeSubServer(t *testing.T, nodes int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
