@@ -134,9 +134,11 @@ panoxy/
 ```bash
 make                                    # build current arch → dist/ (amd64 auto-detects AVX2)
 make build                              # same as above (explicit)
+make build ARCH=arm64                   # cross-compile one arch (amd64|arm64|all; no ARM machine needed)
 make install                            # install CLI → /usr/local/bin/panoxy (PREFIX/BINDIR customizable)
 make build PANOXY_VERSION=V0.0.1        # set a version number
 make build PROG=myproxy                 # customize program name (default panoxy, see "Custom program name")
+make help                               # list all targets with descriptions
 ```
 
 ### Using the script
@@ -146,7 +148,21 @@ make build PROG=myproxy                 # customize program name (default panoxy
 ./build.sh --arch arm64                 # target arch
 ./build.sh --arch all                   # both arches
 ./build.sh --ver V0.0.1                 # set version
+./build.sh install                      # build + smart install (see below)
 ```
+
+#### `build.sh install` — build, then install the right way
+
+Compiles the current arch first, then picks the install path automatically:
+
+- **Installed machine** (`/etc/panoxy.yaml` + installed CLI present): runs the fresh binary's
+  `redeploy` — stop service → swap the CLI in place (config & subscriptions kept) → restart →
+  re-mount firewall → health check. This is the one-command dev iteration loop on a live gateway.
+- **Fresh machine**: installs the CLI only (`--bindir`, default `/usr/local/bin`); deploy
+  afterwards with `sudo panoxy init 'SUB_URL'`.
+
+Unlike `make install`, which just copies the binary to `BINDIR` with no service orchestration,
+`build.sh install` handles the full stop/replace/restart transaction on a running gateway.
 
 ### Manual build
 

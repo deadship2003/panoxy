@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# panoxy 构建脚本(单一入口):编译 CLI / 打离线包 / 清理产物
+# panoxy 构建脚本(单一入口):编译 CLI / 安装 / 打离线包 / 清理产物
 # 用法: build.sh [命令]
 #   编译(默认)   build.sh [--arch amd64|arm64|all] [--ver V0.0.1] [--prog 程序名]
 #                 默认只编当前 CPU 架构;amd64 自带检测 AVX2(有→v3,无→v1)
+#   安装         build.sh install [--bindir /usr/local/bin] [--ver V0.0.1] [--prog 程序名]
+#                 已装机:自动用新二进制跑 redeploy —— 停服务→换 CLI→重启→重挂防火墙→健康检查
+#                 未装机:仅装 CLI 到 --bindir,随后 sudo panoxy init 'SUB_URL' 完成部署
 #   打包         build.sh package [all|amd64|arm64] [--arch ...] [--ver ...] [--prog 程序名] [--sub-url 订阅URL]
 #                 默认只打包当前 CPU 架构;加 all(或 --arch all)打全部目标平台
 #   清理         build.sh clean
@@ -85,6 +88,50 @@ build_cmd() {
 clean() {
   rm -rf dist/ ${PROG}-V*/
   echo "== 已清理 dist/ 与暂存目录 ${PROG}-*/ =="
+}
+
+# ---- 安装:编译当前架构后自动选择安装方式 ----
+#   已装机(/etc/<prog>.yaml 与已装 CLI 均在):exec 新二进制 redeploy ——
+#     停服务+清防火墙 → 就地换 CLI/单元/man → 校验重启 → 重挂防火墙 → 健康检查
+#   未装机:仅安装 CLI(--bindir,默认 /usr/local/bin),提示用 init 完成部署。
+# 编译始终以当前用户执行(避免 root 污染 go build 缓存),提权只发生在安装一步。
+install_cmd() {
+  local BINDIR="/usr/local/bin" VER=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --bindir) BINDIR="$2"; shift 2 ;;
+      --ver)    VER="$2"; shift 2 ;;
+      --prog)   PROG="$2"; shift 2 ;;
+      -h|-\?|--help) usage ;;
+      *) echo "未知参数: $1(查看用法: $0 -h)"; exit 1 ;;
+    esac
+  done
+  local HA; HA="$(host_arch)"
+  [ -n "$HA" ] || { echo "无法识别当前架构,install 仅支持本机安装(交叉编译请用默认编译命令)"; exit 1; }
+  build_cmd --arch "$HA" --ver "$VER" --prog "$PROG"
+  local BIN="$ROOT/dist/$PROG-linux-$HA"
+  [ -x "$BIN" ] || { echo "编译产物缺失: $BIN"; exit 1; }
+
+  local SUDO=""
+  [ "$(id -u)" = 0 ] || SUDO="sudo"
+  srun() { if [ -n "$SUDO" ]; then "$SUDO" "$@"; else "$@"; fi; }
+
+  # 已装机检测:与 CLI 同一套 <PROG>_CONF / <PROG>_CLI 环境覆盖
+  local pfx conf cli
+  pfx="$(envpfx)"
+  conf="$(printenv "${pfx}_CONF" 2>/dev/null || true)"; conf="${conf:-/etc/$PROG.yaml}"
+  cli="$(printenv "${pfx}_CLI" 2>/dev/null || true)";  cli="${cli:-/usr/local/bin/$PROG}"
+
+  if [ -f "$conf" ] && [ -x "$cli" ]; then
+    echo "== 已装机:经新二进制 redeploy 就地刷新(停服务 → 换 CLI → 重启 → 重挂防火墙 → 健康检查) =="
+    srun "$BIN" redeploy
+    echo "== 完成: $cli 已刷新(配置与订阅数据保持不动) =="
+    return 0
+  fi
+  echo "== 未装机($conf 或 $cli 缺失):仅安装 CLI,请随后 sudo $PROG init 'SUB_URL' 完成部署 =="
+  srun install -Dm755 "$BIN" "$BINDIR/$PROG"
+  srun "$BINDIR/$PROG" --version 2>/dev/null || true
+  echo "== 完成: $BINDIR/$PROG =="
 }
 
 # ---- 订阅引导代理:直连下载不了 GitHub 时,用订阅节点建本地代理再下 ----
@@ -248,6 +295,7 @@ package_cmd() {
 case "${1:-}" in
   -h|-\?|--help) usage ;;
   clean)  clean ;;
+  install) shift; install_cmd "$@" ;;
   package) shift; package_cmd "$@" ;;
   *)      build_cmd "$@" ;;
 esac
