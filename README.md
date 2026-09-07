@@ -111,14 +111,16 @@ The first goal of transparent proxying is **normal access**; routing is only an 
 ```
 panoxy/
 ├── src/               Go source (cmd/internal/tests)
-├── dist/              release artifacts (binary + offline package, gitignored)
-├── build.sh           packaging/distribution script (offline package / subscription bootstrap / leak scan)
+├── bin/               build artifacts (raw binaries + checksums, gitignored)
+├── dist/              release artifacts (offline packages, gitignored)
+├── setup.sh           environment & dependency preparation (idempotent; --check preflight)
+├── build.sh           top-level build entry (delegates to make; packaging / smart install)
+├── Makefile           low-level build abstraction (standard targets)
 ├── docs/              extended docs
 │   ├── TPROXY.md      complete TPROXY-mode guide
 │   ├── MIGRATION.md   bash-version migration steps
 │   ├── KNOWN-LIMITATIONS.md
 │   └── TROUBLESHOOTING.md
-├── Makefile           local build/install entry (make)
 └── README.md
 ```
 
@@ -128,27 +130,36 @@ panoxy/
 
 - Go 1.23+ ([install](https://go.dev/dl/))
 - No CGO dependency (fully static build)
+- `./setup.sh` fetches everything else (idempotent; `--check` verifies only)
 
 ### Using Makefile (recommended)
 
 ```bash
-make                                    # build current arch → dist/ (amd64 auto-detects AVX2)
-make build                              # same as above (explicit)
-make build ARCH=arm64                   # cross-compile one arch (amd64|arm64|all; no ARM machine needed)
-make install                            # install CLI → /usr/local/bin/panoxy (PREFIX/BINDIR customizable)
-make build PANOXY_VERSION=V0.0.1        # set a version number
-make build PROG=myproxy                 # customize program name (default panoxy, see "Custom program name")
-make help                               # list all targets with descriptions
+./setup.sh                                 # one-time environment prep (deps only, never compiles)
+make                                       # build current arch → bin/ (amd64 auto-detects AVX2)
+make build                                 # same as above (explicit)
+make build ARCH=arm64                      # cross-compile one arch (amd64|arm64|all; no ARM machine needed)
+make build DEBUG=1                         # debug build (symbols, no optimization)
+make install                               # install the built CLI → /usr/local/bin/panoxy (PREFIX/BINDIR customizable; run make build first)
+make fmt / make lint / make test           # format / go vet / unit tests
+make clean                                 # wipe bin/ + staging (dist/ release packages survive)
+make distclean                             # deep clean (also dist/; never touches global Go caches)
+make build PANOXY_VERSION=V0.0.1           # set a version number
+make build PROG=myproxy                    # customize program name (default panoxy, see "Custom program name")
+make help                                  # list all targets with descriptions
 ```
 
 ### Using the script
 
 ```bash
-./build.sh                              # build current arch (default)
-./build.sh --arch arm64                 # target arch
-./build.sh --arch all                   # both arches
-./build.sh --ver V0.0.1                 # set version
-./build.sh install                      # build + smart install (see below)
+./setup.sh                                 # environment prep (dependencies only, never compiles)
+./build.sh                                 # build current arch (default)
+./build.sh --arch arm64                    # target arch
+./build.sh --arch all                      # both arches
+./build.sh --ver V0.0.1                    # set version
+./build.sh --debug                         # debug build (symbols, no optimization)
+./build.sh --clean                         # wipe bin/ before building
+./build.sh install                         # build + smart install (see below)
 ```
 
 #### `build.sh install` — build, then install the right way
@@ -172,17 +183,17 @@ cd src
 # native arch (amd64)
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v3 \
   go build -trimpath -ldflags "-s -w -X main.version=V0.0.1" \
-  -o ../dist/panoxy-linux-amd64 \
+  -o ../bin/panoxy-linux-amd64 \
   ./cmd/panoxy
 
 # cross-compile ARM64 (no ARM machine needed)
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   go build -trimpath -ldflags "-s -w -X main.version=V0.0.1" \
-  -o ../dist/panoxy-linux-arm64 \
+  -o ../bin/panoxy-linux-arm64 \
   ./cmd/panoxy
 
 # generate checksums
-cd ../dist && sha256sum panoxy-linux-* > sha256sums.txt
+cd ../bin && sha256sum panoxy-linux-* > sha256sums.txt
 ```
 
 <details>
@@ -209,7 +220,7 @@ The default program name `panoxy` is defined in `internal/constants.ProgName`; i
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath \
   -ldflags "-s -w -X main.version=V0.0.1 -X github.com/deadship2003/panoxy/internal/constants.ProgName=myproxy" \
-  -o ../dist/myproxy-linux-amd64 \
+  -o ../bin/myproxy-linux-amd64 \
   ./cmd/panoxy
 ```
 
@@ -239,10 +250,10 @@ Runtime artifacts follow the renamed program (using `myproxy` as the example):
 ### Verify the build
 
 ```bash
-file dist/panoxy-linux-amd64
+file bin/panoxy-linux-amd64
 # ELF 64-bit LSB executable, x86-64, statically linked ✓
 
-dist/panoxy-linux-amd64 --version
+bin/panoxy-linux-amd64 --version
 # panoxy version V0.0.1
 ```
 
@@ -271,7 +282,7 @@ dist/panoxy-linux-amd64 --version
 ### Packaging flow (internal steps)
 
 ```
-[1/5] build ─── inline go build → dist/panoxy-linux-<arch> (both arches when `all`)
+[1/5] build ─── make build → bin/panoxy-linux-<arch> (both arches when `all`)
 [2/5] assets ── local first (ASSETS_SRC) > direct (15s check) > subscription proxy > gh mirror
                  download: geo×3 + Country.mmdb + HyperADRules + metacubexd UI (kernel is embedded in the CLI)
 [3/5] scan ──── subscription-leak detection (token= etc. → abort; URL never enters the package)
@@ -286,13 +297,13 @@ dist/panoxy-linux-amd64 --version
 
 ```bash
 cd ~/panoxy
-mkdir -p dist
+mkdir -p bin dist
 
 # ===== Step 1: build =====
 cd src
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -ldflags "-s -w -X main.version=V0.0.1" \
-  -o ../dist/panoxy-linux-amd64 ./cmd/panoxy
+  -o ../bin/panoxy-linux-amd64 ./cmd/panoxy
 cd ..
 
 # ===== Step 2: download assets =====
@@ -317,7 +328,7 @@ PKG="panoxy-V0.0.1-amd64"
 rm -rf "$PKG"
 mkdir -p "$PKG/assets/geo" "$PKG/assets/ui/official" "$PKG/assets/rule"
 
-cp dist/panoxy-linux-amd64 "$PKG/panoxy"
+cp bin/panoxy-linux-amd64 "$PKG/panoxy"
 chmod +x "$PKG/panoxy"
 cp $TMP/Geo*.dat $TMP/Country.mmdb "$PKG/assets/geo/"
 cp $TMP/HyperADRules-Ads.yaml "$PKG/assets/rule/"

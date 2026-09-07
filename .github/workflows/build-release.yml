@@ -1,25 +1,26 @@
-# panoxy 构建/发布(单文件统一入口)
-#   推 main     → 跑测试 + 编译 linux amd64/arm64 单二进制 → 上传构建产物(workflow artifact)
-#   手动触发    → Actions 页左侧「Build & Release」→ Run workflow(可选:打离线包并发布 Release)
-#   推 v*/V* 标签 → 测试通过后打双架构离线包,自动发布 GitHub Release
-# 本地与 CI 同一真源:全部编译/打包逻辑在 build.sh(本机可复现)
+# panoxy build/release (single unified entry).
+#   push main     -> run tests + build linux amd64/arm64 single binaries -> upload workflow artifacts
+#   manual        -> Actions sidebar "Build & Release" -> Run workflow (optionally package and publish a Release)
+#   push v*/V* tag-> after tests pass, package dual-arch offline bundles and publish a GitHub Release
+# Local and CI share one source of truth: all compile/package logic lives in
+# build.sh + Makefile (locally reproducible).
 name: Build & Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号(留空自动:tag→标签名,否则 git describe/默认 V0.0.1-dev)'
+        description: 'Version (empty = auto: tag name for tags, else git describe / V0.0.1-dev)'
         required: false
         default: ''
       arch:
-        description: '目标架构(仅影响“构建产物”;发布时始终打双架构离线包)'
+        description: 'Target arch (affects "build artifacts" only; releases always package dual-arch)'
         required: false
         default: 'all'
         type: choice
         options: [amd64, arm64, all]
       publish_release:
-        description: '打包离线包并发布 GitHub Release(手动发布时必须填写 version)'
+        description: 'Package offline bundles and publish a GitHub Release (a manual publish must fill in version)'
         required: false
         default: false
         type: boolean
@@ -31,8 +32,9 @@ permissions:
   contents: write
   actions: write
 
-# 并发互斥:同一 ref 同一流水线只保留最新一次构建,旧任务直接终止
-# main 为保护分支,新构建不打断进行中的任务;其余 ref(标签/手动/非 main 分支)直接取消旧任务
+# Concurrency: keep only the newest build per ref; older runs are terminated.
+# main is protected — a new build never interrupts a running job; any other ref
+# (tag/manual/non-main branch) cancels the previous run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
@@ -56,8 +58,11 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
+      - name: Preflight (setup.sh --check)
+        run: ./setup.sh --check
+
       - name: Test
-        run: cd src && go test ./internal/... -timeout 120s
+        run: make test
 
       - name: Determine version
         id: version
@@ -76,13 +81,14 @@ jobs:
           ARCH="${{ github.event.inputs.arch || 'all' }}"
           ./build.sh --arch "$ARCH" --ver "${{ steps.version.outputs.version }}"
 
-      # 按架构拆分 artifact,名字即目标平台(推 main 时 arch 输入为空 → 两个都传)
+      # One artifact per arch, named after the target platform (pushing main leaves arch
+      # input empty -> both are uploaded).
       - name: Upload linux amd64
         if: github.event.inputs.arch == '' || github.event.inputs.arch == 'amd64' || github.event.inputs.arch == 'all'
         uses: actions/upload-artifact@v7
         with:
           name: panoxy-linux-amd64
-          path: dist/panoxy-linux-amd64
+          path: bin/panoxy-linux-amd64
           if-no-files-found: error
 
       - name: Upload linux arm64
@@ -90,17 +96,18 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: panoxy-linux-arm64
-          path: dist/panoxy-linux-arm64
+          path: bin/panoxy-linux-arm64
           if-no-files-found: error
 
       - name: Upload checksums
         uses: actions/upload-artifact@v7
         with:
           name: panoxy-linux-checksums
-          path: dist/sha256sums.txt
+          path: bin/sha256sums.txt
           if-no-files-found: error
 
-      # 删除 main 分支上本 workflow 的历史 run(连其 artifact 一并删),只保留当前这条
+      # Delete this workflow's historical runs on main (with their artifacts),
+      # keeping only the current one.
       - name: Delete old build runs
         if: github.ref_name == 'main'
         env:
@@ -139,9 +146,10 @@ jobs:
               *) VER="$(git describe --tags 2>/dev/null || echo V0.0.1-dev)" ;;
             esac
           fi
-          # 手动发布必须给出明确版本号,防止误把 V0.0.1-dev 发成 Release
+          # A manual publish must carry an explicit version, otherwise V0.0.1-dev
+          # would leak into a Release.
           if [ "${{ github.event_name }}" = 'workflow_dispatch' ] && [ -z "${{ github.event.inputs.version }}" ]; then
-            echo "::error::手动发布 Release 必须填写 version(例如 V0.0.1)"
+            echo "::error::manually publishing a Release requires the version input (e.g. V0.0.1)"
             exit 1
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
@@ -159,12 +167,12 @@ jobs:
           完整性校验:sha256sum -c panoxy-${TAG}-<arch>.tar.gz.sha256
           快速开始:tar xzf panoxy-${TAG}-<arch>.tar.gz && cd panoxy-${TAG}-<arch> && sudo ./panoxy deploy
           随后导入订阅:sudo panoxy sub import(回车进入粘贴模式,URL 无需引号)"
-          # 幂等:Release 已存在则补传/覆盖资产
+          # idempotent: when the Release already exists, (re)upload/overwrite assets
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/panoxy-${TAG}-*.tar.gz dist/panoxy-${TAG}-*.tar.gz.sha256 \
-              dist/panoxy-linux-amd64 dist/panoxy-linux-arm64 --clobber
+              bin/panoxy-linux-amd64 bin/panoxy-linux-arm64 --clobber
           else
             gh release create "$TAG" --title "panoxy ${TAG}" --notes "$notes" \
               dist/panoxy-${TAG}-*.tar.gz dist/panoxy-${TAG}-*.tar.gz.sha256 \
-              dist/panoxy-linux-amd64 dist/panoxy-linux-arm64
+              bin/panoxy-linux-amd64 bin/panoxy-linux-arm64
           fi

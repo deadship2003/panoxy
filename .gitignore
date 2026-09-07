@@ -1,16 +1,14 @@
-# 源码(src/)与发布(dist/)分离;dist 是编译产物不入库
+# Sources (src/) are separated from outputs; build artifacts never enter the repo.
+bin/
 dist/
 
-# 离线包产物
+# Offline-package staging outputs
 panoxy-V*/
 *.tar.gz
 *.sha256
 
-# Go 编译缓存
+# Go test binaries
 *.test
 
-# 包根手工配置(含真实订阅URL)—— 绝不能提交
+# Hand-edited config at the package root (contains real subscription URLs) — must never be committed
 clash.yaml
-
-# 本地打包产物
-*.tar.gz

@@ -1,25 +1,38 @@
-.PHONY: all build install uninstall test e2e test-all clean lint help _build-amd64 _build-arm64 _checksums
-
-# panixy Makefile — 本机开发入口(编译/安装/测试/清理)
-# 打包分发用 build.sh(仓库根目录);两者互不引用,各自内联 go build
-# 内核已内嵌于 CLI(单二进制),测试无需外部 mihomo 二进制。
+# panoxy Makefile — low-level build abstraction (LIF-006 standard target set).
+# Responsibility split: setup.sh owns the environment; build.sh is the top-level
+# entry (both delegate here); this Makefile owns compilation. Developers may
+# call make directly. The mihomo kernel is embedded in the single CLI binary,
+# so tests need no external mihomo binary.
 
 PANOXY_VERSION ?= $(shell git describe --tags 2>/dev/null || echo "V0.0.1-dev")
 PROG           ?= panoxy
-PREFIX        ?= /usr/local
-BINDIR        ?= $(PREFIX)/bin
-DESTDIR       ?=
+PREFIX         ?= /usr/local
+BINDIR         ?= $(PREFIX)/bin
+DESTDIR        ?=
+OUTPUT_DIR     ?= bin
+DIST_DIR       ?= dist
 HOST_ARCH     := $(shell uname -m | sed -e 's/^x86_64$$/amd64/' -e 's/^aarch64$$/arm64/')
 ARCH          ?= $(HOST_ARCH)
 GOAMD64       ?= $(shell grep -qw avx2 /proc/cpuinfo 2>/dev/null && echo v3 || echo v1)
+DEBUG         ?=
 
-LDFLAGS := -s -w -X main.version=$(PANOXY_VERSION) -X github.com/deadship2003/panoxy/internal/constants.ProgName=$(PROG) -buildid=
+# Release build: strip symbols and build-machine paths (smaller, reproducible).
+# DEBUG=1 (wrapped by build.sh --debug): keep symbols, disable optimizations.
+ifeq ($(DEBUG),1)
+  LDFLAGS  := -X main.version=$(PANOXY_VERSION) -X github.com/deadship2003/panoxy/internal/constants.ProgName=$(PROG)
+  TRIMPATH :=
+  BUILDEXTRA := -gcflags "all=-N -l"
+else
+  LDFLAGS  := -s -w -X main.version=$(PANOXY_VERSION) -X github.com/deadship2003/panoxy/internal/constants.ProgName=$(PROG) -buildid=
+  TRIMPATH := -trimpath
+  BUILDEXTRA :=
+endif
 
-# 命令回显:默认静默(@ 前缀),只输出关键状态;
-# 需排查构建时手工加 make -n 仅打印命令、不执行。
+# Command echo: silent by default (@ prefix), status lines only.
+# To inspect a build without running it, use `make -n` (prints the commands).
 Q := @
 
-# 展开目标平台;ARCH 非法时立即报错(而非在 shell 里二次判断)。
+# Expand the target arches; fail fast on an invalid ARCH instead of a shell error.
 ifeq ($(ARCH),all)
   BUILD_ARCHS := amd64 arm64
 else ifeq ($(ARCH),amd64)
@@ -27,49 +40,65 @@ else ifeq ($(ARCH),amd64)
 else ifeq ($(ARCH),arm64)
   BUILD_ARCHS := arm64
 else
-  $(error ARCH 只能是 amd64|arm64|all(当前: $(ARCH)))
+  $(error ARCH must be amd64|arm64|all (got: $(ARCH)))
 endif
 
-all: build ## 默认:编译当前平台二进制
+# `make install` installs the host-matching artifact when ARCH=all was used to build.
+ifeq ($(ARCH),all)
+  INSTALL_ARCH := $(HOST_ARCH)
+else
+  INSTALL_ARCH := $(ARCH)
+endif
 
-build: $(addprefix _build-,$(BUILD_ARCHS)) _checksums ## 编译目标二进制(默认当前平台;ARCH=amd64|arm64|all 覆盖)
+.PHONY: all build clean distclean fmt lint test e2e test-all install uninstall help _build-amd64 _build-arm64 _checksums
+
+all: build ## build binaries for the current platform (default)
+
+build: $(addprefix _build-,$(BUILD_ARCHS)) _checksums ## build target binaries into bin/ (ARCH=amd64|arm64|all; DEBUG=1 keeps symbols)
 
 _build-amd64:
-	@mkdir -p dist
-	@echo "  → 编译 amd64 (GOAMD64=$(GOAMD64))"
-	$(Q)cd src && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=$(GOAMD64) go build -trimpath -ldflags "$(LDFLAGS)" -o ../dist/$(PROG)-linux-amd64 ./cmd/panoxy
+	@mkdir -p $(OUTPUT_DIR)
+	@echo "  -> building amd64 (GOAMD64=$(GOAMD64), debug=$(DEBUG))"
+	$(Q)cd src && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=$(GOAMD64) go build $(TRIMPATH) $(BUILDEXTRA) -ldflags "$(LDFLAGS)" -o ../$(OUTPUT_DIR)/$(PROG)-linux-amd64 ./cmd/panoxy
 
 _build-arm64:
-	@mkdir -p dist
-	@echo "  → 编译 arm64"
-	$(Q)cd src && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../dist/$(PROG)-linux-arm64 ./cmd/panoxy
+	@mkdir -p $(OUTPUT_DIR)
+	@echo "  -> building arm64 (debug=$(DEBUG))"
+	$(Q)cd src && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(TRIMPATH) $(BUILDEXTRA) -ldflags "$(LDFLAGS)" -o ../$(OUTPUT_DIR)/$(PROG)-linux-arm64 ./cmd/panoxy
 
 _checksums:
-	$(Q)(cd dist && sha256sum $(PROG)-linux-* > sha256sums.txt 2>/dev/null || true)
-	@echo "完成 → 产物在 dist/,校验和见 dist/sha256sums.txt"
+	$(Q)cd $(OUTPUT_DIR) && sha256sum $(PROG)-linux-* > sha256sums.txt 2>/dev/null || true
+	@echo "done -> binaries in $(OUTPUT_DIR)/, checksums in $(OUTPUT_DIR)/sha256sums.txt"
 
-install: build ## 安装 CLI → $(DESTDIR)$(BINDIR)/$(PROG)(PREFIX/BINDIR/DESTDIR 可覆盖)
-	$(Q)install -Dm755 dist/$(PROG)-linux-$(ARCH) $(DESTDIR)$(BINDIR)/$(PROG)
-	@echo "→ 已安装 $(DESTDIR)$(BINDIR)/$(PROG)"
+install: ## install the built CLI to $(DESTDIR)$(BINDIR)/$(PROG) (run `make build` first; PREFIX/BINDIR/DESTDIR overridable)
+	$(Q)install -Dm755 $(OUTPUT_DIR)/$(PROG)-linux-$(INSTALL_ARCH) $(DESTDIR)$(BINDIR)/$(PROG)
+	@echo "-> installed $(DESTDIR)$(BINDIR)/$(PROG)"
 
-uninstall: ## 卸载已安装的 CLI
+uninstall: ## remove the installed CLI
 	$(Q)rm -f $(DESTDIR)$(BINDIR)/$(PROG)
-	@echo "→ 已卸载 $(DESTDIR)$(BINDIR)/$(PROG)"
+	@echo "-> removed $(DESTDIR)$(BINDIR)/$(PROG)"
 
-test: ## 运行单元测试(进程内内核,无需外部 mihomo)
-	$(Q)cd src && go test ./internal/... -count=1 -timeout 120s
+fmt: ## format Go sources (cmd/internal/tests only; the third_party mihomo subtree stays untouched)
+	$(Q)cd src && gofmt -l -w cmd internal tests
 
-e2e: ## 运行端到端测试(约 60s;自行编译 panixy 单二进制)
-	$(Q)cd src && go test ./tests/ -count=1 -timeout 300s -v
-
-test-all: test e2e ## 运行全部测试
-
-clean: ## 清理全部编译产物(dist/ 与暂存目录)
-	$(Q)rm -rf dist/ $(PROG)-V*/
-	@echo "→ 已清理"
-
-lint: ## 代码检查
+lint: ## static analysis (go vet)
 	$(Q)cd src && go vet ./...
 
-help: ## 显示所有目标
+test: ## unit tests (in-process kernel, no external mihomo needed)
+	$(Q)cd src && go test ./internal/... -count=1 -timeout 120s
+
+e2e: ## end-to-end tests (~60s; compiles the panoxy single binary itself)
+	$(Q)cd src && go test ./tests/ -count=1 -timeout 300s -v
+
+test-all: test e2e ## run every test layer
+
+clean: ## remove build artifacts (bin/) and staging dirs; release packages in $(DIST_DIR) survive
+	$(Q)rm -rf $(OUTPUT_DIR)/ $(PROG)-V*/
+	@echo "-> cleaned $(OUTPUT_DIR)/ and staging dirs"
+
+distclean: clean ## deep clean: clean + release packages + local env/vendor (never touches global Go caches)
+	$(Q)rm -rf $(DIST_DIR)/ src/.env src/vendor
+	@echo "-> deep-cleaned (including $(DIST_DIR)/)"
+
+help: ## list all targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'

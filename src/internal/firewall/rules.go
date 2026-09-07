@@ -34,7 +34,6 @@ const (
 	fakeIpv6Range = "2001:2::/48" // RFC 5180 基准测试段(公网不可路由),IPv6 版 198.18.0.0/15
 )
 
-
 // BuildNftScript 生成 TUN 模式的完整 nft 脚本。
 // 原则:不阻断任何协议(QUIC/DoT/DoQ/DoH 均纳入正常分流);正常访问优先于分流精度。
 func BuildNftScript(dnsPort, markSelf int) string {
