@@ -50,7 +50,8 @@ func withRootLock(fn func(p paths.Paths) error) error {
 	return fn(p)
 }
 
-// mihomoTest 用进程内内核校验配置(等价 mihomo -t;M2 起不再调用外部二进制)。
+// mihomoTest validates a config with the in-process kernel (equivalent to mihomo -t;
+// since M2 no external binary is invoked).
 func mihomoTest(p paths.Paths, conf string) (string, error) {
 	b, err := os.ReadFile(conf)
 	if err != nil {

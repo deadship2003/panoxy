@@ -1,5 +1,6 @@
-// Package httpx 统一「可选代理」的 HTTP 客户端构造:subscribe 与 upgrade 的多处
-// 直连/代理回退都复刻同一段 Transport 装配,收敛到此避免漂移。
+// Package httpx builds HTTP clients with an optional proxy: the direct/proxy fallbacks
+// in subscribe and upgrade used to duplicate the same Transport assembly — centralized
+// here to avoid drift.
 package httpx
 
 import (
@@ -8,7 +9,8 @@ import (
 	"time"
 )
 
-// Transport 返回出站 Transport;proxy 非空则经该代理(空串=直连)。
+// Transport returns an outbound Transport; a non-empty proxy routes through it (empty
+// string = direct).
 func Transport(proxy string) *http.Transport {
 	tr := &http.Transport{}
 	if proxy != "" {
@@ -18,7 +20,8 @@ func Transport(proxy string) *http.Transport {
 	return tr
 }
 
-// Client 返回带超时的 http.Client;proxy 非空则经该代理出网。
+// Client returns an http.Client with a timeout; a non-empty proxy routes outbound
+// traffic through it.
 func Client(proxy string, timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, Transport: Transport(proxy)}
 }

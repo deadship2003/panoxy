@@ -9,9 +9,10 @@ import (
 	"github.com/deadship2003/panoxy/internal/constants"
 )
 
-// TestValidateRenderedConfig 用进程内内核校验 panoxy 渲染的 tun/tproxy 配置,
-// 等价外部 `mihomo -t`(M1 起替代该外部调用)。
-// 需 geodata 文件,本机缺失时跳过(CI/打包阶段再验)。
+// TestValidateRenderedConfig validates the tun/tproxy configs rendered by panoxy with
+// the in-process kernel, equivalent to the external `mihomo -t` (replacing that external
+// call since M1). Needs geodata files; skips when absent on this machine (verified again
+// in CI/packaging).
 func TestValidateRenderedConfig(t *testing.T) {
 	geoSrc := geodataSrc(t)
 	for _, tc := range []struct {
@@ -32,12 +33,13 @@ func TestValidateRenderedConfig(t *testing.T) {
 		}
 		os.MkdirAll(filepath.Join(dir, "ui", "official"), 0o755)
 		if err := Validate(dir, []byte(out)); err != nil {
-			t.Errorf("%s: 进程内 -t 校验失败: %v", tc.name, err)
+			t.Errorf("%s: in-process -t validation failed: %v", tc.name, err)
 		}
 	}
 }
 
-// geodataSrc 定位 geodata 文件目录(与 asset 包测试同一套来源);找不到则 skip。
+// geodataSrc locates the geodata directory (the same source set as the asset package
+// tests); skips when not found.
 func geodataSrc(t *testing.T) string {
 	t.Helper()
 	if s := os.Getenv("GEO_SRC"); s != "" {
@@ -45,7 +47,7 @@ func geodataSrc(t *testing.T) string {
 	}
 	for _, c := range []string{
 		filepath.Join("/opt", constants.ProgName),
-		"/opt/panixy", // 旧版残留
+		"/opt/panixy", // legacy leftover name
 	} {
 		if _, err := os.Stat(filepath.Join(c, "GeoSite.dat")); err == nil {
 			return c
@@ -56,6 +58,6 @@ func geodataSrc(t *testing.T) string {
 			return filepath.Join(h, "panoxy-e2e")
 		}
 	}
-	t.Skip("本机无 geodata(GeoSite.dat),跳过进程内 -t 实测")
+	t.Skip("no geodata on this machine (GeoSite.dat); skipping the in-process -t verification")
 	return ""
 }

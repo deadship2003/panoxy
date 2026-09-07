@@ -1,67 +1,101 @@
-# 技术笔记
+# Technical notes
 
-两个核心机制的深入分析,面向排查与二次开发——不是历史变更记录。
+Deep dives into two core mechanisms, aimed at troubleshooting and follow-up development —
+not a changelog.
 
-## 一、TPROXY 模式:本机流量闭环与故障恢复
+## 1. TPROXY mode: the local-traffic loop and failure recovery
 
-### 1. 现象
+### 1. Symptom
 
-- TUN 模式正常;`sudo panoxy mode tproxy` 切换后,**网关本机**上的应用连不上外网。
-- LAN 客户端通常仍正常(它们走 PREROUTING 的另一条路径),因此容易被误判成「只有某个应用坏了」,而非防火墙模型问题。
+- TUN mode works; after `sudo panoxy mode tproxy`, applications **on the gateway machine
+  itself** cannot reach the Internet.
+- LAN clients usually keep working (they take a different path via PREROUTING), so this
+  gets misdiagnosed as "one broken app" rather than a firewall-model problem.
 
-### 2. 根因
+### 2. Root cause
 
-TPROXY 默认只在 **prerouting** 钩子生效,抓不到网关本机 **output** 方向的流量。本机 DNS 被劫持后拿到 fake-ip(`198.18.0.1/16`),而 TPROXY 模式没有 TUN 设备去捕获该网段 → fake-ip 按默认路由被甩给网关后被黑洞 → 本机整体断网(国内外全断)。
+TPROXY takes effect only in the **prerouting** hook by default and cannot catch the
+gateway's own **output**-direction traffic. Local DNS gets hijacked and receives a
+fake-ip (`198.18.0.1/16`), but TPROXY mode has no TUN device to capture that range ->
+the fake-ip follows the default route out of the gateway and gets blackholed -> the
+whole local machine loses connectivity (domestic and foreign alike).
 
-与 TUN 等价,必须补全本机流量的 **闭环三要素**:
+For TUN equivalence, the local traffic's **three loop elements** must be completed:
 
-1. **打标** — `local_output` 链(`type route hook output priority mangle`,必须是 `type route` 才会触发 fwmark 重路由)把本机非 keep-out 的 tcp/udp 打 `mark 0x1`。
-2. **回环重入** — 策略路由 `ip rule fwmark 1 lookup 100` + `ip route add local 0.0.0.0/0 dev lo table 100`,把被打标的本机流量重新送入内核,再进 prerouting tproxy。
-3. **放行重入** — 移除 tproxy_prerouting 里的 `iifname "lo" return`(否则吞掉回环重入的包);回环目标地址由 keep4/keep6 兜底。
+1. **Marking** — the `local_output` chain (`type route hook output priority mangle`; it
+   must be `type route` for the fwmark re-route to trigger) marks all non-keep-out local
+   tcp/udp with `mark 0x1`.
+2. **Loop re-entry** — policy routing `ip rule fwmark 1 lookup 100` + `ip route add
+   local 0.0.0.0/0 dev lo table 100` sends the marked local traffic back into the
+   kernel, re-entering prerouting tproxy.
+3. **Re-entry admission** — the `iifname "lo" return` in tproxy_prerouting is removed
+   (it would swallow the re-entering packets); loopback target addresses are covered by
+   the keep4/keep6 sets.
 
-另保留 **DIVERT** 优化:`socket transparent 1 meta mark set 1 accept` 置于 tproxy 语句之前,处理已建立透明连接回环重入的后续包(内核 `tproxy.txt` 标准做法)。
+The **DIVERT** optimization is also kept: `socket transparent 1 meta mark set 1 accept`
+placed before the tproxy statement handles follow-up packets of established transparent
+connections re-entering via loopback (the standard practice from the kernel's
+`tproxy.txt`).
 
-### 3. 判定
+### 3. Diagnosis
 
-- 防火墙规则是否含本机闭环:有无 `local_output` 链、有无 `iifname "lo" return`、策略路由 `fwmark 1 lookup 100` 是否就位。
-- 部署的二进制是否与源码一致(源码已含修复而二进制未重编,是最常见的中招形态)。
+- Does the firewall ruleset contain the local loop: presence of the `local_output`
+  chain, absence of `iifname "lo" return`, and policy routing `fwmark 1 lookup 100` in
+  place.
+- Is the deployed binary identical to the source (source has the fix but the binary was
+  never rebuilt — the most common way to get bitten).
 
-### 4. 恢复流程
+### 4. Recovery procedure
 
-1. 确认源码已含闭环修复;分支落后则先合并对应提交。
-2. 备份旧二进制 → 重编 → 重部署(静态二进制可直接拷贝覆盖)。
-3. `sudo panoxy mode tproxy` 后实测:本机出站走通 + 国内直连 + LAN 侧回归。
-4. 保持 tproxy,或 `sudo panoxy mode tun` 切回。
+1. Confirm the source contains the loop fix; if the branch lags, merge the commits first.
+2. Back up the old binary -> rebuild -> redeploy (a static binary can simply be copied
+   over).
+3. After `sudo panoxy mode tproxy`, verify: local outbound works + domestic direct +
+   LAN-side regression.
+4. Stay on tproxy, or switch back with `sudo panoxy mode tun`.
 
-### 5. 关键参照
+### 5. Key references
 
-- `internal/firewall/rules.go` → `BuildNftTproxyScript`(`local_output` 链 + `tproxy_prerouting`)
-- `internal/firewall/policy.go` → `tproxyPolicyCmds`(策略路由)
-- `internal/constants/constants.go` → `MarkTproxy=1`、`TproxyTable=100`、`TproxyPort=7893`、`MarkSelf=6666`
-- `internal/asset/config.tpl` → `.TProxy` 为真时输出 `tproxy-port: 7893` 并省略 `tun` 块
+- `internal/firewall/rules.go` -> `BuildNftTproxyScript` (the `local_output` chain +
+  `tproxy_prerouting`)
+- `internal/firewall/policy.go` -> `tproxyPolicyCmds` (policy routing)
+- `internal/constants/constants.go` -> `MarkTproxy=1`, `TproxyTable=100`,
+  `TproxyPort=7893`, `MarkSelf=6666`
+- `internal/asset/config.tpl` -> with `.TProxy` true it emits `tproxy-port: 7893` and
+  omits the `tun` block
 
-## 二、双栈 Fake-IP 设计
+## 2. Dual-stack fake-ip design
 
-### 1. 目标
+### 1. Goal
 
-开启 IPv6 fake-ip,并把 DNS 监听从 v4-only 改成双栈,使 IPv6 与 IPv4 一样走 fake-ip 分流。
+Enable IPv6 fake-ip and change the DNS listen from v4-only to dual-stack, so IPv6 flows
+through fake-ip routing split exactly like IPv4.
 
-### 2. 为什么 IPv6 之前走不通
+### 2. Why IPv6 did not work before
 
-- fake-ip 模式下未配置 `fake-ip-range6` 时,AAAA 查询返回空(客户端回退 v4)。
-- 旧 `dns.listen: 0.0.0.0:1053` 只绑 v4,v6 传输的 DNS 查询到不了内核。
+- In fake-ip mode without `fake-ip-range6` configured, AAAA queries return empty
+  (clients fall back to v4).
+- The old `dns.listen: 0.0.0.0:1053` bound v4 only; DNS queries over v6 transport never
+  reached the kernel.
 
-### 3. 关键设计
+### 3. Key design
 
-- `dns.listen: "[::]:1053` 双栈:该字段是**单地址**、不支持逗号多地址;双栈靠 `[::]` + 内核 `net.ipv6.bindv6only=0`(v4 走 v4-mapped)。
-- `fake-ip-range: 198.18.0.1/16`(v4)、`fake-ip-range6: 2001:2::1/48`(v6,RFC 5180 基准测试段,公网不可路由)。
-- `keep6` 白名单**不得**包含 `2001:2::/48`(否则被当直连放行);选段在 ULA(`fc00::/7`)之外,故 `keep6` 里的 `fc00::/7` 无需收窄。
-- 地址池 \(2^{80}\),长期无需变更网段。
+- `dns.listen: "[::]:1053` dual-stack: the field is a **single address** and does not
+  support comma-separated lists; dual-stack comes from `[::]` + the kernel's
+  `net.ipv6.bindv6only=0` (v4 arrives as v4-mapped).
+- `fake-ip-range: 198.18.0.1/16` (v4), `fake-ip-range6: 2001:2::1/48` (v6, the RFC 5180
+  benchmark block, not publicly routable).
+- The `keep6` whitelist must **not** contain `2001:2::/48` (it would be passed through
+  as direct); the chosen block lies outside ULA (`fc00::/7`), so the `fc00::/7` entry in
+  `keep6` needs no narrowing.
+- Address space \(2^{80}\) — the range needs no change for the foreseeable future.
 
-### 4. 关键参照
+### 4. Key references
 
-- `internal/firewall/rules.go` → `fakeIpv4Range`/`fakeIpv6Range` 常量(单一事实源,网络形式 `198.18.0.0/16`、`2001:2::/48`)
-- `internal/asset/config.tpl` → `dns.listen`、`fake-ip-range`、`fake-ip-range6`
-- `internal/config/merge.go` → `--dns mine` 时强制写回 `[::]:1053`(防止被 merge 覆盖回 v4)
-- `cmd/panoxy/misccmds.go` → `warnCompat` 的 `dns.listen` 一致性告警
-- `internal/constants` → `DnsListenPort=1053`
+- `internal/firewall/rules.go` -> the `fakeIpv4Range`/`fakeIpv6Range` constants (single
+  source of truth; network form `198.18.0.0/16`, `2001:2::/48`)
+- `internal/asset/config.tpl` -> `dns.listen`, `fake-ip-range`, `fake-ip-range6`
+- `internal/config/merge.go` -> with `--dns mine` it force-writes `[::]:1053` back
+  (preventing a merge from overriding it back to v4)
+- `cmd/panoxy/misccmds.go` -> the `dns.listen` consistency warning in `warnCompat`
+- `internal/constants` -> `DnsListenPort=1053`

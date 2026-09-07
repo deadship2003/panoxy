@@ -1,4 +1,5 @@
-// Package asset 内嵌资源:systemd 单元模板与 mihomo 完整配置模板(tun/tproxy 双模式变体)。
+// Package asset embeds resources: the systemd unit templates and the full mihomo config
+// template (tun/tproxy dual-mode variants).
 package asset
 
 import (
@@ -13,10 +14,10 @@ import (
 //go:embed service.tpl upgrade-service.tpl upgrade-timer.tpl config.tpl
 var files embed.FS
 
-// UnitData 渲染主服务单元所需字段。
+// UnitData carries the fields needed to render the main service unit.
 type UnitData struct {
-	Mode                   string // tun / tproxy(仅用于 Description)
-	Prog, EnvPrefix        string // 程序名 / env 前缀(随编译期 ProgName 注入)
+	Mode                   string // tun / tproxy (Description only)
+	Prog, EnvPrefix        string // program name / env prefix (follows the compile-time ProgName injection)
 	Conf, Root, UiDir, Cli string
 }
 
@@ -36,11 +37,11 @@ func render(name string, data any) (string, error) {
 	return b.String(), nil
 }
 
-// RenderService 渲染 <Prog>.service(即 panoxy.service;无任何 resolvectl 逻辑;
-// fw apply 内部先无条件 CleanAll,kill -9 残留随 restart 自愈)。
+// RenderService renders <Prog>.service (i.e. panoxy.service; no resolvectl logic at all;
+// fw apply unconditionally CleanAll's first, so kill -9 leftovers self-heal on restart).
 func RenderService(d UnitData) (string, error) { return render("service.tpl", d) }
 
-// RenderUpgradeService / RenderUpgradeTimer 渲染每日自动升级单元。
+// RenderUpgradeService / RenderUpgradeTimer render the daily auto-upgrade units.
 func RenderUpgradeService(cli, root string) (string, error) {
 	return render("upgrade-service.tpl", map[string]string{
 		"Cli": cli, "Root": root,
@@ -53,19 +54,19 @@ func RenderUpgradeTimer() (string, error) {
 	})
 }
 
-// ConfigData 渲染 mihomo 配置所需字段。
+// ConfigData carries the fields needed to render the mihomo config.
 type ConfigData struct {
-	Prog        string // 程序名(渲染到配置头部注释,随编译期 ProgName 注入)
+	Prog        string // program name (rendered into the config header comment; follows the compile-time ProgName injection)
 	MixedPort   int
 	ApiPort     int
 	Secret      string
-	TProxy      bool // true=TPROXY 变体(无 tun 段,加 tproxy-port)
+	TProxy      bool // true = the TPROXY variant (no tun section, adds tproxy-port)
 	TproxyPort  int
 	DnsPort     int
 	RoutingMark int
 }
 
-// DefaultConfigData 常用默认值。
+// DefaultConfigData holds the usual defaults.
 func DefaultConfigData() ConfigData {
 	return ConfigData{
 		Prog:        constants.ProgName,
@@ -79,11 +80,14 @@ func DefaultConfigData() ConfigData {
 	}
 }
 
-// RenderConfig 渲染完整 mihomo 配置(含全部默认分组/规则,承接 bash 版 v0.1.4 资产)。
+// RenderConfig renders the full mihomo config (all default groups/rules included,
+// inheriting the bash-version v0.1.4 assets).
 func RenderConfig(d ConfigData) (string, error) { return render("config.tpl", d) }
 
-// TunParams 与 TunRouteExclude 是 TUN 模式配置块的唯一事实源:config.tpl 模板渲染、
-// config.SetMode 增量重建都从这里取数,避免两处硬编码漂移(改动务必在此,模板随之同步)。
+// TunParams and TunRouteExclude are the single source of truth for the TUN-mode config
+// block: the config.tpl rendering and config.SetMode's incremental rebuild both take
+// their values from here, preventing the two hardcodings from drifting (change them
+// here; the template follows).
 var (
 	TunParams = [][2]string{
 		{"enable", "true"},

@@ -1,9 +1,9 @@
-## 已知限制(必读)
+## Known limitations (read me first)
 
-1. **热重载不重拉 proxy-providers**(内核限制):`PUT /configs` 会重建 provider 对象但只读本地缓存、不重拉订阅;免重启重拉用 `PUT /providers/proxies/{name}`。sub import/del 涉及增删 provider + 重连分组、mode 涉及重建防火墙/tun/tproxy,三者一律重启进程生效
-2. kill -9/OOM 会残留防火墙规则:`systemctl restart panoxy` 启动即自动清理,无需手工
-3. **DoH(443)无法在内核劫持**:浏览器内置加密 DNS 不走分流,status 已提示,建议关闭
-4. 订阅预取只是预校验;运行期内核会按 interval 自行远程拉取
-5. sub import `--name` 依赖配置锚点 `&p`(基础模板自带;纯手写配置需自备)
-6. tun `stack: system` 家用默认;重度 BT/长时 UDP 流媒体/节点频繁掉线/老内核(5.4/5.15)建议改 `gvisor`(进程崩溃可被 systemd 自动拉起,优于静默僵死)
-7. **二进制按「编译机」CPU 选型**:内核已内嵌于 CLI,`build.sh` 在编译时探测本机 AVX2 决定 GOAMD64(有→v3,无→v1);跨 CPU 类别部署(有 AVX2 的机器编译 → 无 AVX2 的老机器)会跑不起来。要全兼容用 `GOAMD64=v1 ./build.sh`(或用无 AVX2 的机器编译)。
+1. **Hot-reload does not re-fetch proxy-providers** (kernel limit): `PUT /configs` rebuilds provider objects but only reads the local cache, never re-fetching subscriptions; a no-restart re-fetch is `PUT /providers/proxies/{name}`. sub import/del involves adding/removing providers + rewiring groups, and mode rebuilds the firewall/tun/tproxy — all three take effect via a process restart
+2. kill -9/OOM can leave firewall rules behind: `systemctl restart panoxy` cleans them automatically at startup, no manual work needed
+3. **DoH (443) cannot be hijacked by the kernel**: browsers' built-in encrypted DNS bypasses routing split; status already warns about it — disabling it is recommended
+4. The subscription prefetch is only a pre-validation; at runtime the kernel fetches remotely on its own interval
+5. sub import `--name` depends on the config anchor `&p` (the base template ships it; fully hand-written configs must provide their own)
+6. tun `stack: system` is the home default; for heavy BT / long UDP streaming / frequently dropping nodes / old kernels (5.4/5.15), switching to `gvisor` is recommended (a process crash gets revived by systemd — better than a silent hang)
+7. **The binary is selected for the *build machine's* CPU**: the kernel is embedded in the CLI, and build.sh probes the local AVX2 support at compile time to pick GOAMD64 (present → v3, absent → v1); deploying across CPU classes (built on an AVX2 machine → run on an old non-AVX2 machine) will not start. For full compatibility build with `GOAMD64=v1 ./build.sh` (or compile on a machine without AVX2).

@@ -1,4 +1,5 @@
-// 进度显示:TTY 下单行刷新进度条,非 TTY 下按里程碑打印(不污染管道/日志)。
+// Progress display: a single-line refreshing progress bar under a TTY, milestone lines
+// when not a TTY (so pipes and logs stay clean).
 package logx
 
 import (
@@ -8,13 +9,13 @@ import (
 	"time"
 )
 
-// Progress 渲染下载/复制进度。
+// Progress renders download/copy progress.
 type Progress struct {
 	label string
 	total int64
-	n     int64 // 实际已下载字节(total 未知即 Content-Length=-1 时,完成信息以它为准)
+	n     int64 // actual bytes transferred (when total is unknown, i.e. Content-Length=-1, completion info is based on this)
 	last  time.Time
-	marks map[int]bool // 非 TTY 里程碑
+	marks map[int]bool // non-TTY milestones
 	isTTY bool
 }
 
@@ -24,7 +25,7 @@ func NewProgress(label string, total int64) *Progress {
 	return &Progress{label: label, total: total, isTTY: isTTY, marks: map[int]bool{}}
 }
 
-// Update 上报已传输字节数。
+// Update reports the number of bytes transferred so far.
 func (p *Progress) Update(n int64) {
 	if p == nil {
 		return
@@ -33,7 +34,7 @@ func (p *Progress) Update(n int64) {
 	now := time.Now()
 	if p.isTTY {
 		if now.Sub(p.last) < 100*time.Millisecond {
-			return // 节流 100ms
+			return // throttled to 100ms
 		}
 		p.last = now
 		fmt.Fprint(os.Stderr, "\r"+p.render(n))
@@ -46,12 +47,12 @@ func (p *Progress) Update(n int64) {
 	for _, m := range []int{0, 25, 50, 75} {
 		if pct >= m && !p.marks[m] {
 			p.marks[m] = true
-			Info("%s: %d%%(%s)", p.label, pct, humanBytes(n, p.total))
+			Info("%s: %d%% (%s)", p.label, pct, humanBytes(n, p.total))
 		}
 	}
 }
 
-// Done 结束(成功/失败都要调,补换行/终点)。
+// Done finishes (must be called on both success and failure; completes the line/endpoint).
 func (p *Progress) Done(err error) {
 	if p == nil {
 		return
@@ -68,7 +69,8 @@ func (p *Progress) Done(err error) {
 
 func (p *Progress) render(n int64) string {
 	if p.total <= 0 {
-		// 总量未知(服务器分块传输/代理剥离 Content-Length):只报实际字节,不画假进度条
+		// Total unknown (server chunked transfer / proxy stripped Content-Length):
+		// report actual bytes only, never draw a fake progress bar.
 		return fmt.Sprintf("  %s %s", p.label, humanBytes(n, p.total))
 	}
 	pct := int(n * 100 / p.total)

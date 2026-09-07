@@ -1,9 +1,12 @@
-// Package logx 分级日志:默认 INFO(一行一步,延续 bash 版节奏);--verbose 显示分步明细;
-// --debug 全量透传(外部命令原样回显、mihomo API 请求响应、文件写入)。
-// 所有日志走 stderr,stdout 保留给 --json 等机器输出。
+// Package logx implements leveled logging: INFO by default (one line per step, keeping
+// the bash-version rhythm); --verbose shows per-step detail; --trace is the full
+// passthrough (external commands echoed verbatim, mihomo API request/response, file
+// writes). All logs go to stderr; stdout stays reserved for machine output like --json.
 //
-// 教训背景:bash 版曾因 exec 重定向吞掉整个脚本 stderr、内核日志走 stdout 被
-// >/dev/null 吃掉,排查"静默失败"花费整轮 —— Go 版外部调用 I/O 在 debug 级零遮蔽。
+// Lesson in the background: the bash version once lost an entire script's stderr to an
+// exec redirection and kernel logs on stdout were eaten by >/dev/null, costing a whole
+// debugging round — in the Go version, external-call I/O is unobfuscated at the trace
+// level.
 package logx
 
 import (
@@ -23,7 +26,7 @@ const (
 
 var level = LevelInfo
 
-// SetLevel 由 cobra persistent flags 注入。
+// SetLevel is injected from the cobra persistent flags.
 func SetLevel(l int) { level = l }
 
 func stamp(lv string, msg string) string {
@@ -34,21 +37,22 @@ func Info(format string, a ...any) {
 	fmt.Fprintln(os.Stderr, stamp("INFO", fmt.Sprintf(format, a...)))
 }
 
-// Step 是 --verbose 级:事务分步(如 "[3/7] 写入配置(备份→.panoxy-bak,即 BackupSuffix 派生)")。
+// Step is the --verbose level: transaction steps (e.g. "[3/7] write config (backup -> .panoxy-bak, i.e. the derived BackupSuffix)").
 func Step(format string, a ...any) {
 	if level >= LevelVerbose {
 		fmt.Fprintln(os.Stderr, stamp("STEP", fmt.Sprintf(format, a...)))
 	}
 }
 
-// Debug 是全量级:外部命令/API 的输入输出原样回显。
+// Debug is the full level: input/output of external commands and APIs echoed verbatim.
 func Debug(format string, a ...any) {
 	if level >= LevelDebug {
 		fmt.Fprintln(os.Stderr, stamp("DEBUG", fmt.Sprintf(format, a...)))
 	}
 }
 
-// DebugCmd 回显一条外部命令的完整命令行与输出(multiline 原样保留)。
+// DebugCmd echoes an external command's full command line and output (multiline output
+// is preserved verbatim).
 func DebugCmd(cmd string, args []string, out string, err error) {
 	if level < LevelDebug {
 		return
@@ -73,7 +77,7 @@ func indent(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// Warn/Error 走 stderr 且始终显示。
+// Warn/Error go to stderr and always display.
 func Warn(format string, a ...any) {
 	fmt.Fprintln(os.Stderr, stamp("WARN", fmt.Sprintf(format, a...)))
 }

@@ -162,11 +162,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.version }}"
-          notes="全离线安装包(双架构):panoxy 独立单二进制构建,融合 mihomo 上游源码;geo 数据(GeoIP/GeoSite/Country.mmdb)、广告规则、metacubexd 面板。
-          另附纯二进制(单文件,可直接拷贝到目标机运行):panoxy-linux-{amd64,arm64}。
-          完整性校验:sha256sum -c panoxy-${TAG}-<arch>.tar.gz.sha256
-          快速开始:tar xzf panoxy-${TAG}-<arch>.tar.gz && cd panoxy-${TAG}-<arch> && sudo ./panoxy deploy
-          随后导入订阅:sudo panoxy sub import(回车进入粘贴模式,URL 无需引号)"
+          notes="Fully offline installers (dual-arch): the panoxy standalone single-binary build with the mihomo upstream source fused in; geo data (GeoIP/GeoSite/Country.mmdb), ad-block rules, and the metacubexd panel.
+          Also plain binaries (single files, copy straight to a target machine and run): panoxy-linux-{amd64,arm64}.
+          Integrity check: sha256sum -c panoxy-${TAG}-<arch>.tar.gz.sha256
+          Quick start: tar xzf panoxy-${TAG}-<arch>.tar.gz && cd panoxy-${TAG}-<arch> && sudo ./panoxy deploy
+          Then import a subscription: sudo panoxy sub import (press enter for paste mode; no quoting needed for the URL)"
           # idempotent: when the Release already exists, (re)upload/overwrite assets
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/panoxy-${TAG}-*.tar.gz dist/panoxy-${TAG}-*.tar.gz.sha256 \

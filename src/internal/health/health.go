@@ -1,6 +1,8 @@
-// Package health 健康检测五要素:服务状态、API、各 provider 节点数、出口连通、防火墙残留。
-// 核心教训(bash 时代实测):内核拉不到订阅时 API 照常应答 —— 只查 API 会假成功,
-// 节点数才是"真的能转发"的前提。
+// Package health implements the five-part health check: service state, API, per-provider
+// node counts, proxy egress connectivity, and firewall leftovers.
+// Core lesson (from bash-era practice): when the kernel cannot fetch a subscription the
+// API still answers normally — checking only the API yields a false success; the node
+// count is the precondition for "can actually forward".
 package health
 
 import (
@@ -27,16 +29,16 @@ type Report struct {
 	Stale     bool                     `json:"stale_rules"`
 	Mode      string                   `json:"mode"`
 	Providers []mihomoapi.ProviderStat `json:"providers"`
-	Nodes     int                      `json:"nodes"`        // 全部 provider 节点合计
-	Egress    string                   `json:"proxy_egress"` // 经 mixed-port 访问 generate_204 的状态码
+	Nodes     int                      `json:"nodes"`        // total nodes across all providers
+	Egress    string                   `json:"proxy_egress"` // generate_204 status code via the mixed-port
 	Direct    string                   `json:"direct_egress"`
 	CoreVer   string                   `json:"core,omitempty"`
 	UIVer     string                   `json:"ui,omitempty"`
 	LastUp    string                   `json:"last_upgrade,omitempty"`
 }
 
-// Collect 收集健康快照。confPath 用于构造 API 客户端与 provider 名单。
-// 单项失败不影响其他项(探测永不致命)。
+// Collect gathers a health snapshot. confPath feeds the API client and the provider list.
+// A single failing probe never affects the others (probing is never fatal).
 func Collect(confPath, uiStamp, lastUp, statePath string) Report {
 	r := Report{Service: systemdunit.Active(), Mode: modeOf(statePath)}
 	api := mihomoapi.NewFromConf(confPath)
@@ -88,7 +90,8 @@ func probe204(viaProxy bool, port int) string {
 	return fmt.Sprintf("%d", resp.StatusCode)
 }
 
-// EgressOK 经代理出网 204,重试 retries 次(升级健康检查用)。
+// EgressOK checks for a 204 through the proxy, retrying `retries` times (used by the
+// upgrade health check).
 func EgressOK(port int, retries int) bool {
 	for i := 0; i < retries; i++ {
 		if code := probe204(true, port); code == "204" {
@@ -99,8 +102,9 @@ func EgressOK(port int, retries int) bool {
 	return false
 }
 
-// WaitHealthy 轮询等待服务+API 就绪(带超时,代替固定 sleep;慢网关不误判)。
-// expectVer 非空时还要求 API 上报该版本。
+// WaitHealthy polls until the service + API are ready (with a timeout, replacing fixed
+// sleeps; slow gateways are not misjudged). A non-empty expectVer additionally requires
+// the API to report that version.
 func WaitHealthy(confPath string, timeout time.Duration, expectVer string) error {
 	api := mihomoapi.NewFromConf(confPath)
 	deadline := time.Now().Add(timeout)

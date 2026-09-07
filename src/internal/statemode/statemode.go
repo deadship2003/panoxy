@@ -1,5 +1,6 @@
-// Package statemode 读写 panoxy 自身状态文件(/opt/panoxy/panoxy.yaml):
-// proxy-mode 等由 CLI 程序化管理的设置。用户不需要手编;缺省 tun。
+// Package statemode reads/writes panoxy's own state file (/opt/panoxy/panoxy.yaml):
+// settings managed programmatically by the CLI, such as proxy-mode. Users never hand-edit
+// it; the default is tun.
 package statemode
 
 import (
@@ -12,12 +13,13 @@ type State struct {
 	ProxyMode string `yaml:"proxy-mode"` // tun | tproxy
 }
 
-// Read 读取状态;文件缺失/损坏一律返回默认值(缺省 tun),不报错(读路径不挡道)。
+// Read reads the state; a missing/corrupt file always yields the default (tun) and no
+// error (the read path never blocks the flow).
 func Read(path string) string {
 	return normalize(readState(path).ProxyMode)
 }
 
-// readState 返回完整状态结构。
+// readState returns the full state structure.
 func readState(path string) State {
 	var st State
 	b, err := os.ReadFile(path)
@@ -33,7 +35,7 @@ func readState(path string) State {
 	return st
 }
 
-// Write 原子写入状态。
+// Write writes the state atomically.
 func Write(path string, st State) error {
 	st.ProxyMode = normalize(st.ProxyMode)
 	b, err := yaml.Marshal(&st)

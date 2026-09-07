@@ -6,36 +6,47 @@ import (
 	"github.com/deadship2003/panoxy/internal/constants"
 )
 
-// keep-out 网段:内核层直接放行、绝不进内核的地址集合(与 TUN route-exclude 等价)。
-// 刻意不含 fake-ip 段(见下方 fakeIpv4Range / fakeIpv6Range)—— 那是必须进内核才能还原域名,不能放行。
-// 单一事实源:BuildNftScript / BuildNftTproxyScript 共用。
+// Keep-out ranges: the address set the kernel layer passes through directly, never
+// entering the kernel (equivalent to TUN route-exclude). The fake-ip ranges are
+// deliberately NOT here (see fakeIpv4Range / fakeIpv6Range below) — those must enter
+// the kernel to have their domains restored, so they must not be exempted.
+// Single source of truth: shared by BuildNftScript / BuildNftTproxyScript.
 const (
 	keep4Elements = "0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, " +
 		"172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, " +
 		"198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4"
-	// fc00::/7(ULA)在此放行。fake-ip6 段选在 RFC 5180 基准段 2001:2::/48(位于 ULA 之外),
-	// 故无需收窄 fc00::/7;只需保证 2001:2::/48 不进 keep6(见 fakeIpv6Range 及测试断言)。
+	// fc00::/7 (ULA) is passed through here. The fake-ip6 range sits in the RFC 5180
+	// benchmark block 2001:2::/48 (outside ULA), so fc00::/7 needs no narrowing; we only
+	// must keep 2001:2::/48 out of keep6 (see fakeIpv6Range and the test assertions).
 	keep6Elements = "::/128, ::1/128, 64:ff9b::/96, 100::/64, 2001:db8::/32, fc00::/7, fe80::/10, ff00::/8"
 
-	// 端口级 keep-out:内核层直接放行的关键端口(Telnet/VPN/NAT/mDNS/NTP)。
-	// 这是 config.tpl rules 段"基础服务直连"的内核级子集 —— 一旦这些端口被劫持 VPN 即断,
-	// 故必须在此直接放行(其余基础服务端口由 mihomo rules 段直连)。两链共用,改动需同步。
-	// 注意:SSH(22)已从内核级放行移除 —— config.tpl 已注释 DST-PORT,22,DIRECT(境外 SSH 走代理,
-	// GitHub SSH 规避污染)。若内核级仍放行 22,TPROXY 模式下 SSH 永不进内核、GitHub SSH 必直连被墙,
-	// 且与 TUN 模式行为不一致(TUN 的 BuildNftScript 本就不放行 22)。此内核子集必须与 config.tpl rules 段同步。
+	// Port-level keep-out: key ports passed through directly at the kernel layer
+	// (Telnet/VPN/NAT/mDNS/NTP). This is the kernel-level subset of the config.tpl rules
+	// section's "basic direct services" — once these ports get hijacked the VPN dies, so
+	// they must be exempted right here (the remaining basic-service ports go direct via
+	// the mihomo rules section). Shared by both chains; changes must stay in sync.
+	// Note: SSH (22) has been removed from the kernel-level exemptions — config.tpl now
+	// keeps DST-PORT,22,DIRECT commented out (foreign SSH goes through the proxy; GitHub
+	// SSH avoids pollution). If the kernel layer still exempted 22, SSH would never enter
+	// the kernel under TPROXY and GitHub SSH would go direct into the wall, diverging
+	// from TUN behavior (BuildNftScript never exempted 22). This kernel subset must stay
+	// in sync with the config.tpl rules section.
 	keepPortsTCP = "tcp dport { 23 }"
 	keepPortsUDP = "udp dport { 41641, 3478, 51820, 1194, 5353, 123 }"
 )
 
-// fake-ip 网段:必须进内核才能还原域名,故刻意不放进 keep 白名单。
-// 单一事实源,与 config.tpl 的 fake-ip-range / fake-ip-range6 联动(此处为网段形式;config 用首地址形式)。
+// fake-ip ranges: must enter the kernel to have their domains restored, so they are
+// deliberately kept out of the keep whitelist. Single source of truth, coupled with the
+// config template's fake-ip-range / fake-ip-range6 (CIDR form here; first-address form
+// in the config).
 const (
 	fakeIpv4Range = "198.18.0.0/16"
-	fakeIpv6Range = "2001:2::/48" // RFC 5180 基准测试段(公网不可路由),IPv6 版 198.18.0.0/15
+	fakeIpv6Range = "2001:2::/48" // RFC 5180 benchmark block (not publicly routable); the IPv6 version of 198.18.0.0/15
 )
 
-// BuildNftScript 生成 TUN 模式的完整 nft 脚本。
-// 原则:不阻断任何协议(QUIC/DoT/DoQ/DoH 均纳入正常分流);正常访问优先于分流精度。
+// BuildNftScript generates the full nft script for TUN mode.
+// Principle: no protocol is blocked (QUIC/DoT/DoQ/DoH all get normal routing); normal
+// access takes priority over routing precision.
 func BuildNftScript(dnsPort, markSelf int) string {
 	return fmt.Sprintf(`table inet %s {
   set keep4 {
@@ -73,16 +84,21 @@ func BuildNftScript(dnsPort, markSelf int) string {
 		dnsPort, markSelf, dnsPort, dnsPort, dnsPort, dnsPort)
 }
 
-// BuildNftTproxyScript 生成 TPROXY 模式脚本:在 TUN 版之上增加 tproxy 链与本机输出打标链。
+// BuildNftTproxyScript generates the TPROXY-mode script: adds the tproxy chain and the
+// local-output marking chain on top of the TUN version.
 //
-// 本机出站流量走 output 钩子(TPROXY 抓不到),故用 local_output 链把「非 keep-out 的本机
-// tcp/udp 流量」打上 markTproxy,经策略路由 `ip rule fwmark 1 lookup 100` → `local 0.0.0.0/0
-// dev lo` 回环重入,再走 tproxy_prerouting 交给内核 —— 与 TUN 等价(含 v6 与直连 IP)。
-// 关键点:local_output 必须用 `type route`(强制 re-route,普通 output 钩子打 mark 不触发重路由)。
+// Local outbound traffic goes through the output hook (TPROXY cannot catch it), so the
+// local_output chain marks "non-keep-out local tcp/udp traffic" with markTproxy; policy
+// routing `ip rule fwmark 1 lookup 100` -> `local 0.0.0.0/0 dev lo` loops it back onto
+// lo, and tproxy_prerouting then hands it to the kernel — equivalent to TUN (v6 and
+// direct-IP included). Key point: local_output must be `type route` (forced re-route;
+// marking in a plain output hook does not trigger re-routing).
 //
-// tproxy_prerouting 的 `socket transparent 1` 是 DIVERT 优化(内核 tproxy.txt 标准做法):
-// 匹配已建立透明连接(IP_TRANSPARENT socket)回环重入的后续包,打标+accept,避免再次走
-// tproxy 语句做无谓的 socket 查找。
+// The `socket transparent 1` in tproxy_prerouting is the DIVERT optimization (the
+// standard practice from the kernel's tproxy.txt): it matches follow-up packets of
+// already-established transparent connections (IP_TRANSPARENT sockets) re-entering via
+// loopback, marking and accepting them so the tproxy statement does not repeat a
+// pointless socket lookup.
 func BuildNftTproxyScript(dnsPort, markSelf, markTproxy, table, tproxyPort int) string {
 	return fmt.Sprintf(`table inet %s {
   set keep4 {

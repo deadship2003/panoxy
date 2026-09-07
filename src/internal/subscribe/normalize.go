@@ -1,13 +1,16 @@
-// 订阅格式识别与归一化:把任意标准订阅格式统一成 mihomo 能解析的 Clash YAML。
+// Subscription format detection and normalization: unify any standard subscription
+// format into Clash YAML that mihomo can parse.
 //
-// 关键事实(经 mihomo v1.19.30 实测):
-//   - mihomo 的 proxy-provider(无论 type: http / file)原生只解析 Clash YAML,
-//     以及 base64/明文 URI 列表(vless/vmess/trojan/ss/ssr/hysteria2/tuic ...)。
-//   - mihomo 不能原生解析:sing-box JSON、Surge 配置、base64 编码的 Clash YAML。
-//     这三类必须由 panoxy 在缓存前归一化成 Clash YAML,并把 provider 切成 type: file
-//     (否则内核重启刷新时会重新拉原始 URL 再解析失败)。
+// Key facts (verified against mihomo v1.19.30):
+//   - mihomo's proxy-provider (type: http or file alike) natively parses only Clash
+//     YAML plus base64/plaintext URI lists (vless/vmess/trojan/ss/ssr/hysteria2/tuic ...).
+//   - mihomo cannot natively parse: sing-box JSON, Surge configs, or base64-encoded
+//     Clash YAML. Those three must be normalized into Clash YAML by panoxy before the
+//     cache is written, with the provider switched to type: file (otherwise the kernel
+//     re-fetches the original URL on restart refresh and fails to parse again).
 //
-// 因此这里的职责不是为某个机场写专用解析,而是覆盖所有标准订阅格式的通用识别与转换。
+// So the job here is not airport-specific parsing: it is generic detection and
+// conversion covering every standard subscription format.
 package subscribe
 
 import (
@@ -22,29 +25,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Format 订阅内容格式。
+// Format is the subscription content format.
 type Format int
 
 const (
-	FormatUnknown     Format = iota // 无法识别(空、HTML 错误页等)
-	FormatClash                     // Clash YAML(proxies: 列表)
-	FormatURI                       // 明文 URI 列表(每行一个 scheme://...)
-	FormatBase64URI                 // base64 编码的 URI 列表(mihomo 可原生解码)
-	FormatBase64Clash               // base64 编码的 Clash YAML(需解码)
-	FormatSingBox                   // sing-box JSON(outbounds:)
-	FormatSurge                     // Surge 配置(#!MANAGED-CONFIG / [Proxy])
+	FormatUnknown     Format = iota // unrecognizable (empty, an HTML error page, ...)
+	FormatClash                     // Clash YAML (proxies: list)
+	FormatURI                       // plaintext URI list (one scheme://... per line)
+	FormatBase64URI                 // base64-encoded URI list (mihomo decodes natively)
+	FormatBase64Clash               // base64-encoded Clash YAML (needs decoding)
+	FormatSingBox                   // sing-box JSON (outbounds:)
+	FormatSurge                     // Surge config (#!MANAGED-CONFIG / [Proxy])
 )
 
-// uriScheme 常见的代理 URI scheme(用于判定一行是否为节点 URI)。
+// uriSchemeRe matches the common proxy URI schemes (to decide whether a line is a node URI).
 var uriSchemeRe = regexp.MustCompile(`^(vless|vmess|trojan|ss|ssr|hysteria2?|hy2|tuic|snell|wireguard|http|https|socks5)://`)
 
-// Detect 识别订阅内容格式。
+// Detect detects the subscription content format.
 func Detect(b []byte) Format {
 	s := strings.TrimSpace(string(b))
 	if s == "" {
 		return FormatUnknown
 	}
-	// Surge 托管配置头
+	// Surge managed-config header
 	if strings.HasPrefix(s, "#!MANAGED-CONFIG") {
 		return FormatSurge
 	}
@@ -57,22 +60,22 @@ func Detect(b []byte) Format {
 			}
 		}
 	}
-	// Clash YAML(含 proxies 键)
+	// Clash YAML (contains the proxies key)
 	var doc map[string]any
 	if yaml.Unmarshal([]byte(s), &doc) == nil {
 		if _, ok := doc["proxies"]; ok {
 			return FormatClash
 		}
 	}
-	// Surge 无托管头的纯配置([Proxy] 段)
+	// bare Surge config without the managed header ([Proxy] section)
 	if strings.Contains(s, "[Proxy]") {
 		return FormatSurge
 	}
-	// 明文 URI 列表
+	// plaintext URI list
 	if isURILine(firstNonEmptyLine(s)) {
 		return FormatURI
 	}
-	// base64:解码后可能是 URI 列表或 Clash YAML
+	// base64: after decoding it may be a URI list or Clash YAML
 	if dec, err := decodeBase64Line(s); err == nil {
 		d := strings.TrimSpace(dec)
 		if d == "" {
@@ -91,9 +94,11 @@ func Detect(b []byte) Format {
 	return FormatUnknown
 }
 
-// Normalize 把订阅内容归一化为 mihomo 能解析的 Clash YAML。
-// 返回归一化后的字节、是否发生转换(需要 provider 切 type: file)、以及错误。
-// Clash YAML / URI 列表(明文或 base64)mihomo 原生解析,原样透传(converted=false)。
+// Normalize normalizes subscription content into Clash YAML mihomo can parse.
+// It returns the normalized bytes, whether a conversion happened (the provider must
+// then switch to type: file), and an error.
+// Clash YAML / URI lists (plaintext or base64) are parsed natively by mihomo and
+// passed through as-is (converted=false).
 func Normalize(b []byte) ([]byte, bool, error) {
 	switch Detect(b) {
 	case FormatBase64Clash:
@@ -115,8 +120,9 @@ func Normalize(b []byte) ([]byte, bool, error) {
 	}
 }
 
-// NodeNames 提取订阅中的节点名(供派生组剪枝:只保留实际命中的地区/类型分组)。
-// 覆盖全部标准格式;URI 列表取 #fragment 名称。
+// NodeNames extracts the node names from a subscription (for derived-group pruning:
+// keep only the region/type groups actually hit). Covers every standard format;
+// URI lists use the #fragment name.
 func NodeNames(b []byte) ([]string, error) {
 	switch Detect(b) {
 	case FormatClash:
@@ -141,7 +147,7 @@ func NodeNames(b []byte) ([]string, error) {
 	}
 }
 
-// ---- 各格式节点名提取 ----
+// ---- per-format node-name extraction ----
 
 func clashNodeNames(b []byte) ([]string, error) {
 	var doc struct {
@@ -193,7 +199,8 @@ func singboxNodeNames(b []byte) ([]string, error) {
 	return out, nil
 }
 
-// surgeProxyLines 返回 Surge 配置 [Proxy] 段内的非注释行(节点名提取与节点转换共用)。
+// surgeProxyLines returns the non-comment lines inside a Surge config's [Proxy]
+// section (shared by node-name extraction and node conversion).
 func surgeProxyLines(b []byte) []string {
 	var out []string
 	inProxy := false
@@ -221,7 +228,7 @@ func surgeNodeNames(b []byte) ([]string, error) {
 	return out, nil
 }
 
-// ---- 转换:sing-box JSON → Clash YAML ----
+// ---- conversion: sing-box JSON -> Clash YAML ----
 
 func singboxToClash(b []byte) ([]byte, error) {
 	var doc struct {
@@ -242,16 +249,17 @@ func singboxToClash(b []byte) ([]byte, error) {
 	return renderClashProxies(proxies)
 }
 
-// singboxOutbound 把单个 sing-box outbound 映射为 Clash proxy(不支持的类型返回 ok=false 跳过)。
-// 注意 TLS 字段名按协议不同:vless/vmess 用 tls+servername,trojan/hysteria2/tuic 用 sni;
-// hysteria2/tuic 无 udp 字段(hysteria2 天生 UDP,tuic 用 udp-relay-mode)。
+// singboxOutbound maps a single sing-box outbound to a Clash proxy (unsupported types
+// return ok=false and are skipped). Note the TLS field names differ per protocol:
+// vless/vmess use tls+servername while trojan/hysteria2/tuic use sni; hysteria2/tuic
+// have no udp field (hysteria2 is UDP by nature, tuic uses udp-relay-mode).
 func singboxOutbound(ob map[string]any) (map[string]any, bool) {
 	tag, _ := ob["tag"].(string)
 	sbType, _ := ob["type"].(string)
 	server, _ := ob["server"].(string)
 	port := intVal(ob["server_port"])
 	if server == "" || port == 0 {
-		return nil, false // direct/dns-out 等非节点出站
+		return nil, false // a non-node outbound such as direct/dns-out
 	}
 	p := map[string]any{"name": tag, "server": server, "port": port}
 
@@ -289,7 +297,7 @@ func singboxOutbound(ob map[string]any) (map[string]any, bool) {
 		if u, _ := ob["uuid"].(string); u != "" {
 			p["uuid"] = u
 		}
-		// mihomo vmess 要求显式给 alterId 与 cipher(缺省值也须写出,否则拒载)
+		// mihomo's vmess requires explicit alterId and cipher (defaults must be written out too, or it refuses to load)
 		p["alterId"] = intVal(ob["alter_id"])
 		cipher := "auto"
 		if c, _ := ob["security"].(string); c != "" && c != "auto" {
@@ -358,14 +366,14 @@ func singboxOutbound(ob map[string]any) (map[string]any, bool) {
 		return nil, false
 	}
 
-	// 传输层仅 TCP 型协议有(ws/http/grpc)
+	// transport exists only for TCP-type protocols (ws/http/grpc)
 	if tr, ok := ob["transport"].(map[string]any); ok {
 		applySingboxTransport(p, tr)
 	}
 	return p, true
 }
 
-// applySingboxTransport 把 sing-box transport 映射为 Clash 的 network + 对应 opts。
+// applySingboxTransport maps a sing-box transport to Clash's network + the matching opts.
 func applySingboxTransport(p map[string]any, tr map[string]any) {
 	t, _ := tr["type"].(string)
 	switch t {
@@ -402,7 +410,7 @@ func applySingboxTransport(p map[string]any, tr map[string]any) {
 	}
 }
 
-// ---- 转换:Surge → Clash YAML ----
+// ---- conversion: Surge -> Clash YAML ----
 
 func surgeToClash(b []byte) ([]byte, error) {
 	var proxies []map[string]any
@@ -417,7 +425,7 @@ func surgeToClash(b []byte) ([]byte, error) {
 	return renderClashProxies(proxies)
 }
 
-// surgeProxy 解析一行 Surge 节点定义(SS/SSR/trojan/vmess/vless/hysteria2 等常见协议)。
+// surgeProxy parses one Surge node definition line (common protocols: SS/SSR/trojan/vmess/vless/hysteria2).
 func surgeProxy(line string) (map[string]any, bool) {
 	i := strings.Index(line, "=")
 	if i <= 0 {
@@ -470,7 +478,7 @@ func surgeProxy(line string) (map[string]any, bool) {
 		if u := params["username"]; u != "" {
 			p["uuid"] = u
 		}
-		// mihomo vmess 要求显式给 alterId 与 cipher(Surge 无 alterId,固定 0)
+		// mihomo's vmess requires explicit alterId and cipher (Surge has no alterId; fixed at 0)
 		p["alterId"] = 0
 		cipher := "auto"
 		if m := params["encrypt-method"]; m != "" {
@@ -533,15 +541,17 @@ func applySurgeWS(p map[string]any, params map[string]string) {
 	}
 }
 
-// ---- 通用工具 ----
+// ---- shared helpers ----
 
-// nodeCount 统计订阅中的节点数(识别格式后;供 Validate 判断"是否有节点")。
-// 不要求节点有名:URI 列表按行计数,其余按条目计数,避免 URI 列表缺 #name 时被误判为 0。
+// nodeCount counts the nodes in a subscription (after format detection; lets Validate
+// decide "has nodes"). Node names are not required: URI lists count lines, the rest
+// count entries, so a URI list without #name is not misjudged as 0.
 func nodeCount(b []byte) int {
 	return nodeCountDetected(b, Detect(b))
 }
 
-// nodeCountDetected 在已知格式下计数,避免 Validate 与 nodeCount 各自再做一次 Detect(重复解析)。
+// nodeCountDetected counts with the format already known, so Validate and nodeCount
+// do not each repeat a Detect (double parsing).
 func nodeCountDetected(b []byte, f Format) int {
 	switch f {
 	case FormatClash:
@@ -555,7 +565,7 @@ func nodeCountDetected(b []byte, f Format) int {
 		return countURILines(string(b))
 	case FormatBase64URI, FormatBase64Clash:
 		if dec, err := decodeBase64Line(strings.TrimSpace(string(b))); err == nil {
-			return nodeCount([]byte(dec)) // 解码后是新内容,重新识别
+			return nodeCount([]byte(dec)) // the decoded payload is new content; re-detect
 		}
 	case FormatSingBox:
 		var doc struct {
@@ -586,7 +596,7 @@ func countURILines(s string) int {
 	return n
 }
 
-// renderClashProxies 把 proxy 映射列表渲染为 Clash YAML(proxies: 段)。
+// renderClashProxies renders a list of proxy maps into Clash YAML (the proxies: section).
 func renderClashProxies(proxies []map[string]any) ([]byte, error) {
 	out, err := yaml.Marshal(map[string]any{"proxies": proxies})
 	if err != nil {
@@ -595,7 +605,7 @@ func renderClashProxies(proxies []map[string]any) ([]byte, error) {
 	return out, nil
 }
 
-// uriFragmentName 提取 URI 的 #fragment(节点名,百分号解码)。
+// uriFragmentName extracts the URI's #fragment (the node name, percent-decoded).
 func uriFragmentName(uri string) string {
 	i := strings.IndexByte(uri, '#')
 	if i < 0 || i+1 >= len(uri) {
@@ -621,7 +631,8 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-// decodeBase64Line 解码订阅 base64(去空白,兼容标准/URL 编码与无填充)。
+// decodeBase64Line decodes subscription base64 (whitespace stripped; standard/URL
+// encodings and missing padding all tolerated).
 func decodeBase64Line(s string) (string, error) {
 	clean := strings.Map(func(r rune) rune {
 		switch r {

@@ -6,13 +6,13 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-# 自定义安装目录时,fw apply/upgrade 子进程据此找到状态与数据(与 --root 一致)
+# With a custom install dir, the fw apply/upgrade subprocesses find the state and data via this (matches --root)
 Environment={{.EnvPrefix}}_ROOT={{.Root}}
-# 启动前配置校验(进程内 -t)
+# Pre-start config validation (in-process -t)
 ExecStartPre={{.Cli}} check
-# 进程内跑内核(融合 mihomo Go 代码;不再启动外部二进制)
+# Run the kernel in-process (mihomo Go code fused in; no external binary started)
 ExecStart={{.Cli}} run
-# DNS 劫持规则:apply 内部先无条件 CleanAll 再加载 —— kill -9/OOM 残留随 restart 自愈
+# DNS hijack rules: apply unconditionally CleanAll's before loading — kill -9/OOM leftovers self-heal on restart
 ExecStartPost={{.Cli}} fw apply
 ExecStop={{.Cli}} fw clean
 Restart=on-failure

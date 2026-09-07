@@ -18,18 +18,18 @@ func TestRenderConfigVariants(t *testing.T) {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if !strings.Contains(out, "mixed-port: 33833") || !strings.Contains(out, "secret: test-secret") {
-			t.Errorf("%s: 端口/密钥未渲染", tc.name)
+			t.Errorf("%s: port/secret not rendered", tc.name)
 		}
 		if !strings.Contains(out, "routing-mark: 6666") {
-			t.Errorf("%s: 缺 routing-mark(防 DNS 回环)", tc.name)
+			t.Errorf("%s: routing-mark missing (DNS-loop prevention)", tc.name)
 		}
 		if !strings.Contains(out, `listen: "[::]:1053"`) {
-			t.Errorf("%s: DNS 监听应为 [::]:1053 双栈(redirect 落点)", tc.name)
+			t.Errorf("%s: DNS listen should be [::]:1053 dual-stack (the redirect landing point)", tc.name)
 		}
 		if !strings.Contains(out, "fake-ip-range6: 2001:2::1/48") {
-			t.Errorf("%s: 缺 fake-ip-range6(IPv6 fake-ip 池)", tc.name)
+			t.Errorf("%s: fake-ip-range6 missing (IPv6 fake-ip pool)", tc.name)
 		}
-		// 断言只看非注释行(注释里会提到这些历史字段)
+		// assertions look at non-comment lines only (comments mention these historical fields)
 		var body []string
 		for _, l := range strings.Split(out, "\n") {
 			if !strings.HasPrefix(strings.TrimSpace(l), "#") {
@@ -38,15 +38,15 @@ func TestRenderConfigVariants(t *testing.T) {
 		}
 		code := strings.Join(body, "\n")
 		if strings.Contains(code, "dns-hijack") || strings.Contains(code, "\n  fallback:") {
-			t.Errorf("%s: 不应包含 dns-hijack/fallback", tc.name)
+			t.Errorf("%s: must not contain dns-hijack/fallback", tc.name)
 		}
 		if tc.tproxy {
 			if !strings.Contains(out, "tproxy-port: 7893") || strings.Contains(out, "tun:") {
-				t.Errorf("tproxy 变体错误")
+				t.Errorf("wrong tproxy variant")
 			}
 		} else {
 			if !strings.Contains(out, "stack: system") || strings.Contains(out, "tproxy-port") {
-				t.Errorf("tun 变体错误")
+				t.Errorf("wrong tun variant")
 			}
 		}
 	}

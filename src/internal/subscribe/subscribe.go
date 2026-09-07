@@ -1,4 +1,5 @@
-// Package subscribe 订阅预取与校验(直连优先,失败走本机 mixed-port 代理跳板)。
+// Package subscribe implements subscription prefetch and validation (direct first, the
+// local mixed-port proxy as fallback stepping stone).
 package subscribe
 
 import (
@@ -16,19 +17,20 @@ import (
 	"github.com/deadship2003/panoxy/internal/logx"
 )
 
-// UA 返回拉取订阅的 User-Agent。
-// 实测同一机场对不同 UA 返回不同节点数:ClashMetaForAndroid/clash-verge 拿到
-// 最多(44 个),clash.meta 只有 41 个。取最大值的 UA,固定返回。
+// UA returns the User-Agent used to fetch subscriptions. Measured in practice: the same
+// airport returns different node counts for different UAs — ClashMetaForAndroid/clash-verge
+// got the most (44 nodes), clash.meta only 41. We pin the UA that yields the maximum.
 func UA() string {
 	return "ClashMetaForAndroid/2.11.5"
 }
 
-// Fetch 拉取订阅到 w:直连优先,失败经本机 mixed-port 代理(换被墙订阅时旧节点当跳板)。
-// proxy 形如 http://127.0.0.1:33833,空则只试直连。
+// Fetch downloads a subscription to w: direct first, on failure through the local
+// mixed-port proxy (when swapping a blocked subscription, the old nodes serve as the
+// stepping stone). proxy looks like http://127.0.0.1:33833; empty means direct only.
 func Fetch(url, proxy, ua string, w io.Writer) error {
 	try := func(p string) error {
 		tr := httpx.Transport(p)
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // 订阅常见自签/IP 直连
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // subscriptions commonly use self-signed certs / bare-IP hosts
 		hc := &http.Client{Timeout: 20 * time.Second, Transport: tr}
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("User-Agent", ua)
@@ -55,9 +57,10 @@ func Fetch(url, proxy, ua string, w io.Writer) error {
 	return try(proxy)
 }
 
-// Validate 校验订阅内容:必须能识别出格式且至少含一个节点。
-// 覆盖所有标准订阅格式(Clash YAML / URI 列表 / sing-box / Surge),见 normalize.go;
-// 机场对无效 token 常返回网页/空,必须拦下(bash 时代实测教训)。
+// Validate checks subscription content: the format must be recognizable and contain at
+// least one node. Covers every standard subscription format (Clash YAML / URI lists /
+// sing-box / Surge), see normalize.go; airports often return a web page for an invalid
+// token, which must be caught (bash-era lesson from practice).
 func Validate(b []byte) error {
 	if len(strings.TrimSpace(string(b))) == 0 {
 		return fmt.Errorf("subscription content is empty")
@@ -72,7 +75,7 @@ func Validate(b []byte) error {
 	return nil
 }
 
-// ValidateFile 校验本地订阅文件并读回内容。
+// ValidateFile validates a local subscription file and reads its content back.
 func ValidateFile(path string) ([]byte, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -86,7 +89,7 @@ func ValidateFile(path string) ([]byte, error) {
 
 var nameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// CheckName 校验 provider 名称(防注入 YAML 键与 API 路径)。
+// CheckName validates a provider name (prevents injection into YAML keys and API paths).
 func CheckName(name string) error {
 	if !nameRe.MatchString(name) {
 		return fmt.Errorf("name may only contain [a-zA-Z0-9_-]: %q", name)
@@ -94,7 +97,7 @@ func CheckName(name string) error {
 	return nil
 }
 
-// CheckURL 校验订阅 URL。
+// CheckURL validates a subscription URL.
 func CheckURL(u string) error {
 	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
 		return fmt.Errorf("URL must start with http(s):// (quote the whole argument when passing it on the command line, or run %s sub import and paste it at the prompt)", constants.ProgName)

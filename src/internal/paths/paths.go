@@ -1,4 +1,5 @@
-// Package paths 解析运行时路径:默认值 + 环境变量覆盖(<PROG>_ROOT 等),供沙箱测试复用 bash 版经验。
+// Package paths resolves runtime paths: defaults + environment-variable overrides
+// (<PROG>_ROOT etc.), so sandboxes and tests can reuse the bash-version experience.
 package paths
 
 import (
@@ -12,17 +13,17 @@ type Paths struct {
 	Root        string // /opt/<prog>
 	UiDir       string
 	UiStamp     string
-	State       string // /opt/<prog>/<prog>.yaml:自身状态(proxy-mode 等)
-	Conf        string // /etc/<prog>.yaml:mihomo 配置(唯一事实源)
-	DefaultConf string // /opt/<prog>/config.default.yaml:纯净默认模板副本(merge-conf 重建基线)
+	State       string // /opt/<prog>/<prog>.yaml: the program's own state (proxy-mode etc.)
+	Conf        string // /etc/<prog>.yaml: the mihomo config (single source of truth)
+	DefaultConf string // /opt/<prog>/config.default.yaml: pristine default-template copy (merge-conf rebuild baseline)
 	UnitDir     string
 	Cli         string
 	ManGz       string
 	Sysctl      string
 	Lock        string
 	LastUp      string
-	Proxies     string // 订阅缓存目录
-	RuleProv    string // 规则缓存目录
+	Proxies     string // subscription cache dir
+	RuleProv    string // rule-provider cache dir
 }
 
 func env(key, def string) string {
@@ -32,7 +33,8 @@ func env(key, def string) string {
 	return def
 }
 
-// Get 返回当前环境的路径集合(每次调用重新解析,环境变量即时生效)。
+// Get returns the path set for the current environment (re-resolved on every call, so
+// env overrides take effect immediately).
 func Get() Paths {
 	pfx := constants.EnvPrefix()
 	root := env(pfx+"_ROOT", constants.DefRootDir)

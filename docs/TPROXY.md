@@ -1,21 +1,23 @@
-# TPROXY 模式指南
+# TPROXY mode guide
 
-### TPROXY 模式详细指南
+### Detailed guide for TPROXY mode
 
-**前置检测(物理机/真机)**:
+**Prechecks (physical/real machines)**:
 ```bash
-# 走 nftables,依赖 nf_tproxy_ipv4/ipv6 内核模块(内核 4.18+ 默认含):
+# Uses nftables, depending on the nf_tproxy_ipv4/ipv6 kernel modules (kernel 4.18+
+# includes them by default):
 sudo modprobe nf_tproxy_ipv4 nf_tproxy_ipv6
 ```
-Arch/Debian/Ubuntu 标准内核默认包含;WSL2 微信裁剪内核不支持。
+Standard Arch/Debian/Ubuntu kernels include them by default; WSL2's trimmed kernels do
+not support it.
 
-**切换**:
+**Switching**:
 ```bash
-sudo panoxy mode tproxy     # 原子切换:旧规则卸载→配置变体→重启→新规则→健康检查
-sudo panoxy mode tun        # 切回 TUN(自动清理 TPROXY 规则)
+sudo panoxy mode tproxy     # atomic switch: old rules unloaded -> config variant -> restart -> new rules -> health check
+sudo panoxy mode tun        # switch back to TUN (TPROXY rules cleaned up automatically)
 ```
 
-**切换后验证**:
+**Verify after switching**:
 ```bash
 panoxy mode                              # "tproxy"
 ip rule show | grep fwmark              # fwmark 0x1 lookup 100
@@ -23,26 +25,28 @@ ip route show table 100                 # local default dev lo
 sudo nft list table inet panoxy | grep tproxy
 ```
 
-**TUN vs TPROXY 对比**:
+**TUN vs TPROXY comparison**:
 
-| 对比项 | TUN(默认) | TPROXY |
+| Aspect | TUN (default) | TPROXY |
 |---|---|---|
-| 源 IP | ❌ 丢失(显示为网关 IP) | ✅ **保留客户端真实 IP** |
-| 性能 | gvisor 用户态 | 内核转发,**理论最优** |
-| 配置复杂度 | 低(auto-route) | 中(mark/策略路由) |
-| 内核要求 | TUN 驱动 | nf_tproxy 模块(nftables) |
-| Docker/容器 | 兼容好 | 可能误劫持 |
-| WSL2/虚拟化 | ✅ | ❌(内核裁剪) |
+| Source IP | ❌ lost (shows as the gateway IP) | ✅ **client's real IP preserved** |
+| Performance | gvisor userspace | kernel forwarding, **theoretically optimal** |
+| Config complexity | low (auto-route) | medium (mark/policy routing) |
+| Kernel requirement | TUN driver | nf_tproxy module (nftables) |
+| Docker/containers | good compatibility | may get hijacked by mistake |
+| WSL2/virtualization | ✅ | ❌ (trimmed kernels) |
 
-**透明网关网络拓扑**:
-- 链路:`Internet ← WAN ← panoxy 机器(LAN 口 192.168.1.1)← LAN 设备`
-- 出站(设备→外网):panoxy 机器做 `nftables DNS 劫持` + `TPROXY mark+tproxy`,流量交给内核 `:7893`
-- 回程(DHCP):LAN 设备网关 = `192.168.1.1`、DNS = 公网(53 被劫持),设备本身无需任何配置
+**Transparent-gateway network topology**:
+- Chain: `Internet <- WAN <- panoxy machine (LAN port 192.168.1.1) <- LAN devices`
+- Outbound (device -> Internet): the panoxy machine does `nftables DNS hijack` +
+  `TPROXY mark+tproxy`, handing traffic to the kernel on `:7893`
+- Return path (DHCP): LAN devices get gateway = `192.168.1.1`, DNS = a public server
+  (53 gets hijacked); the devices themselves need no configuration at all
 
-**LAN 设备接入(三选一)**:
-1. 路由器 DHCP 下发网关 = panoxy 机器 LAN IP,DNS = 公网地址
-2. 单台设备手动设网关指向 panoxy 机器
-3. panoxy 机器自身跑 DHCP(dnsmasq 示例):
+**LAN device onboarding (pick one)**:
+1. The router's DHCP hands out gateway = the panoxy machine's LAN IP, DNS = a public address
+2. A single device gets its gateway pointed at the panoxy machine manually
+3. The panoxy machine itself runs DHCP (dnsmasq example):
 ```bash
 sudo tee /etc/dnsmasq.conf << 'EOF'
 interface=eth0
@@ -53,7 +57,7 @@ EOF
 sudo systemctl enable --now dnsmasq
 ```
 
-**故障排查**:
-- 切换后断网:`sudo systemctl restart panoxy`(自愈)
-- 策略路由丢:`ip rule show | grep fwmark` 确认;`sudo panoxy fw apply` 重载
-- 某设备不走代理:检查其网关是否指向 panoxy 机器
+**Troubleshooting**:
+- Network down after switching: `sudo systemctl restart panoxy` (self-heals)
+- Policy routing lost: confirm with `ip rule show | grep fwmark`; reload with `sudo panoxy fw apply`
+- A device not proxied: check whether its gateway points at the panoxy machine

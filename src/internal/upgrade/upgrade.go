@@ -1,5 +1,6 @@
-// Package upgrade 面向 GitHub 的内核/面板升级:查最新、下载(经本机代理优先)、
-// 试运行校验、原子替换、备份轮换。编排(重启+健康+回滚)在命令层。
+// Package upgrade implements GitHub-facing kernel/panel upgrades: query the latest,
+// download (local proxy preferred), trial-validate, atomic swap, backup rotation.
+// Orchestration (restart + health + rollback) lives in the command layer.
 package upgrade
 
 import (
@@ -14,7 +15,8 @@ import (
 	"github.com/deadship2003/panoxy/internal/logx"
 )
 
-// Latest 查询 repo(如 MetaCubeX/mihomo)最新稳定 tag;经本机代理优先,失败直连。
+// Latest queries a repo's (e.g. MetaCubeX/mihomo) latest stable tag; local proxy
+// preferred, direct as the fallback.
 func Latest(repo, proxy string) (string, error) {
 	api := "https://api.github.com/repos/" + repo + "/releases/latest"
 	fetch := func(p string) (string, error) {
@@ -38,7 +40,7 @@ func Latest(repo, proxy string) (string, error) {
 	return fetch("")
 }
 
-// Download 下载 url 到 dst(经代理优先,失败直连;>=300 视为失败)。
+// Download fetches url to dst (proxy preferred, direct fallback; >=300 is a failure).
 func Download(urlStr, proxy, dst string) error {
 	try := func(p string) error {
 		hc := httpx.Client(p, 300*time.Second)
@@ -65,9 +67,11 @@ func Download(urlStr, proxy, dst string) error {
 	return try("")
 }
 
-// DownloadProgress 带进度条下载:统一 10 分钟超时(Content-Length 已知时渲染百分比)。
-// 连通性探测(15s 硬顶)已由调用方 directAssetReachable 完成,此处不做重复判定;
-// 大文件下载正常约需 10-30s,15s 硬顶会误杀大文件下载(实测教训)。
+// DownloadProgress downloads with a progress bar: a uniform 10-minute timeout (percent
+// rendered when Content-Length is known). The connectivity probe (15s hard cap) has
+// already been done by the caller's directAssetReachable, so it is not repeated here;
+// a large-file download normally needs 10-30s, and a 15s hard cap would kill it
+// (lesson from practice).
 func DownloadProgress(urlStr, proxy, dst, label string) error {
 	return downloadOnce(urlStr, proxy, dst, label, 600*time.Second)
 }

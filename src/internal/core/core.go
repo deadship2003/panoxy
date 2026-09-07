@@ -1,8 +1,10 @@
-// Package core 进程内封装 mihomo 内核(Alpha 分支),与外部 mihomo 二进制等价。
+// Package core wraps the mihomo kernel (Alpha branch) in-process, equivalent to the
+// external mihomo binary.
 //
-// M2 起生命周期切换为进程内:systemd 单元 ExecStart 直接跑 Run,不再启动外部二进制。
-// Run 严格对应上游 main.go 的启动段 + 信号主循环;Validate 对应 -t 校验。
-// 禁止私自增删逻辑(细节见 [[mihomo-alpha-embedding]])。
+// Since M2 the lifecycle is in-process: the systemd unit's ExecStart runs Run directly
+// instead of launching an external binary. Run corresponds strictly to the startup
+// section + signal loop of upstream main.go; Validate corresponds to the -t check.
+// Adding or removing logic on our own is forbidden (details in [[mihomo-alpha-embedding]]).
 package core
 
 import (
@@ -22,10 +24,12 @@ import (
 	"github.com/metacubex/mihomo/log"
 )
 
-// Run 进程内启动内核并阻塞,等价 mihomo main() 的启动段 + 信号主循环:
-// PreferGo → maxprocs → SetHomeDir → SetConfig → config.Init → hub.Parse(nil) →
-// geo 自动更新 → 信号循环(SIGHUP 重读文件 reload / SIGINT·SIGTERM → executor.Shutdown)。
-// configPath 为空时退回 homeDir/config.yaml(等价 -f 缺省)。opts 透传 external-ui 等覆盖项。
+// Run starts the kernel in-process and blocks, equivalent to mihomo main()'s startup
+// section + signal loop:
+// PreferGo -> maxprocs -> SetHomeDir -> SetConfig -> config.Init -> hub.Parse(nil) ->
+// geo auto-update -> signal loop (SIGHUP re-reads the file / SIGINT/SIGTERM ->
+// executor.Shutdown). An empty configPath falls back to homeDir/config.yaml (equivalent
+// to the -f default). opts passes through overrides such as external-ui.
 func Run(homeDir, configPath string, opts ...hub.Option) error {
 	net.DefaultResolver.PreferGo = true
 	_, _ = maxprocs.Set(maxprocs.Logger(func(string, ...any) {}))
@@ -64,8 +68,9 @@ func Run(homeDir, configPath string, opts ...hub.Option) error {
 	}
 }
 
-// Validate 等价 mihomo -t:仅解析校验配置,不启动任何监听。
-// homeDir 用于解析 geodata(GeoSite.dat/GeoIP.dat)等相对资源;为空则用默认 home。
+// Validate is equivalent to mihomo -t: parse-and-check the config only, starting no
+// listeners. homeDir resolves relative resources such as geodata (GeoSite.dat/GeoIP.dat);
+// empty means the default home.
 func Validate(homeDir string, configBytes []byte) error {
 	if homeDir != "" {
 		C.SetHomeDir(homeDir)
@@ -74,5 +79,6 @@ func Validate(homeDir string, configBytes []byte) error {
 	return err
 }
 
-// Version 返回内嵌内核的版本(上游 Alpha 分支 C.Version;融合后内核=panoxy 自身)。
+// Version returns the embedded kernel's version (upstream Alpha branch C.Version; after
+// the fusion the kernel is panoxy itself).
 func Version() string { return C.Version }

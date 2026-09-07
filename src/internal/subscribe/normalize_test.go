@@ -57,33 +57,33 @@ func TestDetect(t *testing.T) {
 }
 
 func TestNormalize(t *testing.T) {
-	// 原生格式:原样透传,不转换
+	// native formats: passed through as-is, no conversion
 	for _, in := range []string{clashYAML, uriList, b64(uriList)} {
 		out, converted, err := Normalize([]byte(in))
 		if err != nil {
-			t.Fatalf("Normalize(原生格式) 出错: %v", err)
+			t.Fatalf("Normalize(native format) failed: %v", err)
 		}
 		if converted {
-			t.Errorf("原生格式不应转换: %q", firstNonEmptyLine(in))
+			t.Errorf("a native format must not be converted: %q", firstNonEmptyLine(in))
 		}
 		if strings.TrimSpace(string(out)) != strings.TrimSpace(in) {
-			t.Errorf("原生格式应原样透传,got=%q", string(out))
+			t.Errorf("a native format must pass through unchanged, got=%q", string(out))
 		}
 	}
 
-	// base64 Clash:解码 + converted=true
+	// base64 Clash: decoded + converted=true
 	out, converted, err := Normalize([]byte(b64(clashYAML)))
 	if err != nil || !converted {
-		t.Fatalf("b64-clash 应转换: converted=%v err=%v", converted, err)
+		t.Fatalf("b64-clash should convert: converted=%v err=%v", converted, err)
 	}
 	if !strings.Contains(string(out), "proxies:") {
-		t.Errorf("b64-clash 解码后应含 proxies:, got=%q", string(out))
+		t.Errorf("decoded b64-clash should contain proxies:, got=%q", string(out))
 	}
 
-	// sing-box → Clash YAML
+	// sing-box -> Clash YAML
 	out, converted, err = Normalize([]byte(singBox))
 	if err != nil || !converted {
-		t.Fatalf("sing-box 应转换: converted=%v err=%v", converted, err)
+		t.Fatalf("sing-box should convert: converted=%v err=%v", converted, err)
 	}
 	var doc struct {
 		Proxies []struct {
@@ -92,30 +92,30 @@ func TestNormalize(t *testing.T) {
 		} `yaml:"proxies"`
 	}
 	if err := yaml.Unmarshal(out, &doc); err != nil {
-		t.Fatalf("sing-box 转换结果不是有效 YAML: %v", err)
+		t.Fatalf("the sing-box conversion result is not valid YAML: %v", err)
 	}
-	if len(doc.Proxies) != 2 { // direct 出站应被跳过
-		t.Fatalf("sing-box 应转换出 2 个节点,got=%d", len(doc.Proxies))
+	if len(doc.Proxies) != 2 { // the direct outbound must be skipped
+		t.Fatalf("sing-box should convert into 2 nodes, got=%d", len(doc.Proxies))
 	}
 	if doc.Proxies[0].Type != "vless" || doc.Proxies[1].Type != "trojan" {
-		t.Errorf("sing-box 转换类型错误: %+v", doc.Proxies)
+		t.Errorf("wrong sing-box conversion types: %+v", doc.Proxies)
 	}
 
-	// Surge → Clash YAML
+	// Surge -> Clash YAML
 	out, converted, err = Normalize([]byte(surge))
 	if err != nil || !converted {
-		t.Fatalf("surge 应转换: converted=%v err=%v", converted, err)
+		t.Fatalf("surge should convert: converted=%v err=%v", converted, err)
 	}
 	if err := yaml.Unmarshal(out, &doc); err != nil {
-		t.Fatalf("surge 转换结果不是有效 YAML: %v", err)
+		t.Fatalf("the surge conversion result is not valid YAML: %v", err)
 	}
 	if len(doc.Proxies) != 2 {
-		t.Fatalf("surge 应转换出 2 个节点,got=%d", len(doc.Proxies))
+		t.Fatalf("surge should convert into 2 nodes, got=%d", len(doc.Proxies))
 	}
 
-	// 未知格式报错
+	// unknown format errors out
 	if _, _, err := Normalize([]byte("<html>err</html>")); err == nil {
-		t.Errorf("未知格式应报错")
+		t.Errorf("an unknown format should error")
 	}
 }
 
@@ -134,7 +134,7 @@ func TestNodeNames(t *testing.T) {
 	for _, c := range cases {
 		got, err := NodeNames([]byte(c.in))
 		if err != nil {
-			t.Fatalf("NodeNames 出错: %v", err)
+			t.Fatalf("NodeNames failed: %v", err)
 		}
 		if len(got) != len(c.want) {
 			t.Fatalf("NodeNames(%q) = %v, want %v", firstNonEmptyLine(c.in), got, c.want)
@@ -150,26 +150,27 @@ func TestNodeNames(t *testing.T) {
 func TestValidate(t *testing.T) {
 	for _, in := range []string{clashYAML, uriList, b64(uriList), b64(clashYAML), singBox, surge} {
 		if err := Validate([]byte(in)); err != nil {
-			t.Errorf("Validate(%q) 应通过, got=%v", firstNonEmptyLine(in), err)
+			t.Errorf("Validate(%q) should pass, got=%v", firstNonEmptyLine(in), err)
 		}
 	}
 	if err := Validate([]byte("")); err == nil {
-		t.Errorf("空内容应报错")
+		t.Errorf("empty content should error")
 	}
 	if err := Validate([]byte("<html>登录失效</html>")); err == nil {
-		t.Errorf("HTML 错误页应报错")
+		t.Errorf("an HTML error page should error")
 	}
 	if err := Validate([]byte("{}")); err == nil {
-		t.Errorf("无节点 JSON 应报错")
+		t.Errorf("JSON without nodes should error")
 	}
-	// 无 #name 的 URI 列表:按节点行计数,不应被误判为 0
+	// a URI list without #name: counted per node line, must not be misjudged as 0
 	if err := Validate([]byte("vless://uuid@example.com:443?security=tls\n")); err != nil {
-		t.Errorf("无名 URI 列表应通过(按节点计数), got=%v", err)
+		t.Errorf("a nameless URI list should pass (counted per node), got=%v", err)
 	}
 }
 
-// TestSingboxFieldMapping 校验转换器输出的关键字段(尤其 mihomo 的硬性要求):
-// vmess 必须显式给 alterId 与 cipher;hysteria2/tuic 用 sni 而非 tls/servername。
+// TestSingboxFieldMapping verifies the converter's key output fields (especially
+// mihomo's hard requirements): vmess must carry explicit alterId and cipher;
+// hysteria2/tuic use sni rather than tls/servername.
 func TestSingboxFieldMapping(t *testing.T) {
 	in := `{"outbounds":[
 {"type":"vmess","tag":"vm","server":"a.com","server_port":80,"uuid":"53fac7ed-2b9e-43f6-ab96-9d37d4667f94","alter_id":0,"security":"auto"},
@@ -178,13 +179,13 @@ func TestSingboxFieldMapping(t *testing.T) {
 ]}`
 	out, _, err := Normalize([]byte(in))
 	if err != nil {
-		t.Fatalf("Normalize 出错: %v", err)
+		t.Fatalf("Normalize failed: %v", err)
 	}
 	var doc struct {
 		Proxies []map[string]any `yaml:"proxies"`
 	}
 	if err := yaml.Unmarshal(out, &doc); err != nil {
-		t.Fatalf("输出非有效 YAML: %v", err)
+		t.Fatalf("the output is not valid YAML: %v", err)
 	}
 	byName := map[string]map[string]any{}
 	for _, p := range doc.Proxies {
@@ -193,25 +194,25 @@ func TestSingboxFieldMapping(t *testing.T) {
 
 	vm := byName["vm"]
 	if vm["alterId"] != 0 || vm["cipher"] != "auto" {
-		t.Errorf("vmess 必须显式给 alterId=0 与 cipher=auto, got alterId=%v cipher=%v", vm["alterId"], vm["cipher"])
+		t.Errorf("vmess must carry explicit alterId=0 and cipher=auto, got alterId=%v cipher=%v", vm["alterId"], vm["cipher"])
 	}
 
 	hy2 := byName["hy2"]
 	if hy2["sni"] != "c.com" || hy2["type"] != "hysteria2" {
-		t.Errorf("hysteria2 应映射 sni, got=%v", hy2)
+		t.Errorf("hysteria2 should map sni, got=%v", hy2)
 	}
 	if _, bad := hy2["tls"]; bad {
-		t.Errorf("hysteria2 不应有 tls 字段")
+		t.Errorf("hysteria2 must not have a tls field")
 	}
 	if _, bad := hy2["udp"]; bad {
-		t.Errorf("hysteria2 不应有 udp 字段")
+		t.Errorf("hysteria2 must not have a udp field")
 	}
 
 	tu := byName["tu"]
 	if tu["type"] != "tuic" || tu["uuid"] != "53fac7ed-2b9e-43f6-ab96-9d37d4667f94" {
-		t.Errorf("tuic 映射错误: %v", tu)
+		t.Errorf("wrong tuic mapping: %v", tu)
 	}
 	if _, bad := tu["tls"]; bad {
-		t.Errorf("tuic 不应有 tls 字段")
+		t.Errorf("tuic must not have a tls field")
 	}
 }

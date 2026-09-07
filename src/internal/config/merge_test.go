@@ -11,15 +11,16 @@ import (
 	"github.com/deadship2003/panoxy/internal/core"
 )
 
-// personalSample 模拟个人配置:自定义分组(进程/地理分流)、自建节点、端口密钥、
-// 其他订阅、规则订阅 —— merge-conf 的全部输入形态。
+// personalSample emulates a personal config: custom groups (process/geo routing),
+// self-hosted nodes, ports/secret, another subscription, a rule provider — every input
+// shape merge-conf deals with.
 const personalSample = `mixed-port: 7897
 port: 18080
 socks-port: 10808
 secret: mysecret
 external-controller: 127.0.0.1:19090
 
-# 我的自建节点
+# my self-hosted nodes
 proxies:
   - name: "家庭VPS"
     type: vmess
@@ -66,7 +67,7 @@ rules:
 
 func mergeSetup(t *testing.T) (*Editor, *Editor, string) {
 	t.Helper()
-	// 基底:模板 + 已导入订阅 Nano(sub import 后的形态)
+	// base: the template + an already-imported subscription Nano (the shape after sub import)
 	out, err := asset.RenderConfig(asset.DefaultConfigData())
 	if err != nil {
 		t.Fatal(err)
@@ -99,82 +100,83 @@ func TestMergePersonalDecisionTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provs := base.Providers() // 融合后取(占位已退场,真实订阅名原样)
+	provs := base.Providers() // taken after the merge (the placeholder has retired; real subscription names stay)
 	base.WireAfterMerge(provs, rep.PersonalProxies, MergeOpts{})
 	base.SetPath(filepath.Join(dir, "merged.yaml"))
 	base.Save()
 	s := string(mustRead(t, filepath.Join(dir, "merged.yaml")))
 
-	// 接管(个人)
+	// taken over (personal)
 	for _, want := range []string{
 		"mixed-port: 7897", "port: 18080", "socks-port: 10808",
 		"secret: mysecret", "127.0.0.1:19090",
 		"name: 我的分组", "PROCESS-NAME,ssh,DIRECT", "家庭VPS",
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("未接管: %q", want)
+			t.Errorf("not taken over: %q", want)
 		}
 	}
-	// 保留(基底暗号/基础设施)
+	// kept (base marks/infrastructure)
 	for _, want := range []string{"routing-mark: 6666", `listen: "[::]:1053"`, "stack: system", "ntp.aliyun.com"} {
 		if !strings.Contains(s, want) {
-			t.Errorf("基底未保留: %q", want)
+			t.Errorf("base value not kept: %q", want)
 		}
 	}
-	// 合并:providers(Nano 保留 + mine2 新增)
+	// merged: providers (Nano kept + mine2 added)
 	if !strings.Contains(s, "mine2:") || !strings.Contains(s, "Nano:") {
-		t.Error("订阅合并不符")
+		t.Error("subscription merge mismatch")
 	}
-	// 自动调整:进程规则 → strict
+	// auto adjustment: process rules -> strict
 	if !strings.Contains(s, "find-process-mode: strict") {
-		t.Error("进程规则未触发 find-process-mode=strict")
+		t.Error("process rule did not trigger find-process-mode=strict")
 	}
-	// 接线:Nano 追加进个人组;占位 SUB 应已退场(真实订阅就位)
-	// 叠加融合:基底组保留(含 Nano 在 use 中的引用),个人组追加
+	// wiring: Nano appended into the personal group; the placeholder SUB must have
+	// retired (a real subscription is in place). Additive merge: base groups kept
+	// (including Nano in their use), personal groups appended.
 	if !strings.Contains(s, "use: [mine2, Nano]") && !strings.Contains(s, "use: [SUB, Nano, mine2]") {
-		// 个人组的 use 含 mine2,基底组的 use 含 Nano;叠加后两者共存
+		// the personal group's use has mine2, the base groups' use has Nano; both coexist after the overlay
 		hasNano := strings.Contains(s, "Nano")
 		hasMine2 := strings.Contains(s, "mine2")
 		if !hasNano || !hasMine2 {
-			t.Errorf("基底与个人订阅均应存在:Nano=%v mine2=%v", hasNano, hasMine2)
+			t.Errorf("both the base and personal subscriptions should exist: Nano=%v mine2=%v", hasNano, hasMine2)
 		}
 	}
 	if got := base.Providers(); strings.Contains(strings.Join(got, ","), "SUB") {
-		t.Errorf("占位订阅应退场,现有: %v", got)
+		t.Errorf("the placeholder subscription should retire, current: %v", got)
 	}
 	if strings.Contains(s, `url: "SUB_URL_PLACEHOLDER"`) {
-		t.Error("占位订阅 URL 残留")
+		t.Error("placeholder subscription URL residue")
 	}
-	// 个人 proxies 追加进有 proxies 列表的组(末尾,默认不变)
+	// personal proxies appended into groups that have a proxies list (at the end, defaults unchanged)
 	if !strings.Contains(s, "proxies: [家庭VPS, 公司出口]") {
-		t.Errorf("个人组 proxies 列表被破坏(应原样保留,追加不重复)")
+		t.Errorf("the personal group's proxies list was broken (should stay as-is; appends dedupe)")
 	}
-	// 叠加融合验证:基底组保留 + 同名融合 + 新增追加
+	// additive-merge verification: base groups kept + same-name merged + new appended
 	if !strings.Contains(s, "name: DNS") {
-		t.Error("基底 DNS 组应保留(叠加融合不删基底组)")
+		t.Error("the base DNS group should be kept (additive merge never deletes base groups)")
 	}
 	if !strings.Contains(s, "🚀 节点选择") {
-		t.Error("基底 🚀 节点选择 组应保留(叠加融合)")
+		t.Error("the base 🚀 节点选择 group should be kept (additive merge)")
 	}
 	if !strings.Contains(s, "name: 我的分组") {
-		t.Error("个人新增组应追加")
+		t.Error("the personal new group should be appended")
 	}
-	// 规则:个人前置 + 基底兜底
+	// rules: personal first + base fallback
 	if !strings.Contains(s, "PROCESS-NAME,ssh,DIRECT") {
-		t.Error("个人进程规则应在前置")
+		t.Error("the personal process rule should come first")
 	}
 	if !strings.Contains(s, "GEOSITE,TikTok,🎵 TikTok") {
-		t.Error("基底规则应保留为兜底")
+		t.Error("the base rules should be kept as fallback")
 	}
-	// MATCH 应在最后
+	// MATCH should be last
 	rulesStart := strings.Index(s, "rules:")
 	matchIdx := strings.LastIndex(s, "MATCH,🌐 其他")
 	if rulesStart < 0 || matchIdx < rulesStart {
-		t.Error("MATCH 规则应存在")
+		t.Error("the MATCH rule should exist")
 	}
-	// &p 锚点保留
+	// the &p anchor is kept
 	if !strings.Contains(s, "p: &p") {
-		t.Error("&p 锚点应保留(sub import 依赖)")
+		t.Error("the &p anchor should be kept (sub import depends on it)")
 	}
 }
 
@@ -187,7 +189,8 @@ func subSnippet(s string) string {
 	return ""
 }
 
-// TestMergedConfigPassesCheck 融合产物过进程内内核 -t(等价外部 mihomo -t)。
+// TestMergedConfigPassesCheck runs the merge product through the in-process kernel -t
+// (equivalent to the external mihomo -t).
 func TestMergedConfigPassesCheck(t *testing.T) {
 	geoSrc := geoFallback(t)
 	base, per, dir := mergeSetup(t)
@@ -196,7 +199,7 @@ func TestMergedConfigPassesCheck(t *testing.T) {
 	merged := filepath.Join(dir, "merged.yaml")
 	base.SetPath(merged)
 	base.Save()
-	// geo 就位
+	// geo in place
 	for _, f := range []string{"GeoIP.dat", "GeoSite.dat", "Country.mmdb"} {
 		if b, err := os.ReadFile(filepath.Join(geoSrc, f)); err == nil {
 			os.WriteFile(filepath.Join(dir, f), b, 0o644)
@@ -204,7 +207,7 @@ func TestMergedConfigPassesCheck(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(dir, "ui", "official"), 0o755)
 	if err := core.Validate(dir, mustRead(t, merged)); err != nil {
-		t.Errorf("融合产物未过 -t:%v", err)
+		t.Errorf("the merged product failed -t: %v", err)
 	}
 }
 
@@ -212,7 +215,7 @@ func geoFallback(t *testing.T) string {
 	t.Helper()
 	for _, c := range []string{
 		filepath.Join("/opt", constants.ProgName),
-		"/opt/panixy", // 旧版残留
+		"/opt/panixy", // legacy leftover name
 		os.Getenv("GEO_SRC"),
 	} {
 		if c == "" {
@@ -227,6 +230,6 @@ func geoFallback(t *testing.T) string {
 			return h + "/panoxy-e2e"
 		}
 	}
-	t.Skip("本机无 geodata(GeoSite.dat),跳过进程内 -t 实测")
+	t.Skip("no geodata on this machine (GeoSite.dat); skipping the in-process -t verification")
 	return ""
 }

@@ -1,7 +1,15 @@
-# panoxy 项目规则
+# panoxy project rules
 
-## 提交署名(开发准则)
+## Commit attribution (development guideline)
 
-所有 commit 的 **author 与 committer** 一律用 `Deadship2003 <Deadship2003@gmail.com>`(邮箱 local-part 大写 D)。
+Every commit uses `Deadship2003 <Deadship2003@gmail.com>` (capital D in the email
+local-part) for **both author and committer**.
 
-**禁止**使用 `Claude Code`、`Panic` 或任何其他身份;禁止添加 `Co-Authored-By: Claude Code` trailer。
+`Claude Code`, `Panic`, or any other identity is **forbidden**; adding a
+`Co-Authored-By: Claude Code` trailer is forbidden as well.
+
+## Language
+
+All text is English: comments, commit messages, docs, help output, and user-facing copy
+(LIF-007). Chinese content is acceptable only as functional data (e.g. airport node
+names in configs/filters).

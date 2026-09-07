@@ -1,6 +1,7 @@
-// Package config 以 yaml.v3 Node 模式增量编辑 /etc/clash.yaml:
-// 只触碰 proxy-providers[NAME] 与各组 use 列表,保留注释/锚点/其他 provider,
-// 绝不整块覆盖 —— 这是 sub import "只做节点管理与融合" 语义的落点。
+// Package config incrementally edits /etc/clash.yaml in yaml.v3 Node mode:
+// it touches only proxy-providers[NAME] and the groups' use lists, preserving
+// comments/anchors/other providers — never a wholesale overwrite. This is where the
+// "sub import only does node management and wiring" semantics land.
 package config
 
 import (
@@ -15,17 +16,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PlaceholderURL 是默认模板占位订阅的 url 值(SUB_URL_PLACEHOLDER)。
-// 首个真实订阅导入(sub import)或 merge-conf 时该占位订阅自动退场(见 MergePersonal 与 subcmds 的占位清理)。
+// PlaceholderURL is the default template's placeholder subscription url value
+// (SUB_URL_PLACEHOLDER). It retires automatically on the first real import (sub import)
+// or on merge-conf (see MergePersonal and the placeholder cleanup in subcmds).
 const PlaceholderURL = "SUB_URL_PLACEHOLDER"
 
-// Editor 持有解析后的配置树;所有操作仅改内存,Save 落盘。
+// Editor holds the parsed config tree; all operations mutate memory only, Save persists.
 type Editor struct {
 	root *yaml.Node // DocumentNode
 	path string
 }
 
-// Load 解析配置文件为 Node 树(注释随节点保留)。
+// Load parses the config file into a Node tree (comments are preserved with the nodes).
 func Load(path string) (*Editor, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -41,9 +43,10 @@ func Load(path string) (*Editor, error) {
 	return &Editor{root: &root, path: path}, nil
 }
 
-// Render 编码为字符串(缩进 2,与手写风格一致),不落盘。
-// 归一化:yaml.v3 会把 merge 键显式输出为 "!!merge <<",这里还原为手写的裸 "<<"
-// (下次解析时 resolve 仍会识别为 merge;避免整份配置因一个编辑产生全文件 diff 噪音)。
+// Render encodes to a string (indent 2, matching the hand-written style) without
+// persisting. Normalization: yaml.v3 emits merge keys explicitly as "!!merge <<"; here we
+// restore the hand-written bare "<<" (the next parse still resolves it as a merge; keeps
+// one edit from producing whole-file diff noise).
 func (e *Editor) Render() (string, error) {
 	normalizeMergeKeys(e.root)
 	var buf []byte
@@ -53,12 +56,13 @@ func (e *Editor) Render() (string, error) {
 		return "", fmt.Errorf("failed to encode YAML: %w", err)
 	}
 	enc.Close()
-	// 反转义非 ASCII(yaml.v3 默认把 emoji 等转成 "\U0001F503",功能正确但可读性差;
-	// 仅处理码点 ≥0x80 的 \U/\u 序列,字面反斜杠场景不受影响)
+	// Un-escape non-ASCII (yaml.v3 turns emoji etc. into "\U0001F503" by default —
+	// functionally correct but unreadable; only codepoints >= 0x80 in \U/\u sequences
+	// are processed, literal-backslash cases are unaffected).
 	return unescapeNonASCII(string(buf)) + "\n", nil
 }
 
-// Save 编码落盘。
+// Save encodes and persists.
 func (e *Editor) Save() error {
 	out, err := e.Render()
 	if err != nil {
@@ -127,12 +131,12 @@ type nopWriter struct{ b *[]byte }
 
 func (w *nopWriter) Write(p []byte) (int, error) { *w.b = append(*w.b, p...); return len(p), nil }
 
-// topMap 返回顶层 MappingNode。
+// topMap returns the top-level MappingNode.
 func (e *Editor) topMap() *yaml.Node {
 	return e.root.Content[0]
 }
 
-// mapGet 在 mapping 中按键取值节点;不存在返回 nil。
+// mapGet fetches the value node for a key in a mapping; nil when absent.
 func mapGet(m *yaml.Node, key string) *yaml.Node {
 	if m == nil || m.Kind != yaml.MappingNode {
 		return nil
@@ -145,7 +149,8 @@ func mapGet(m *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// mapSet 替换或追加键值(追加在末尾,保留原顺序与注释)。
+// mapSet replaces or appends a key/value pair (appended at the end, preserving the
+// original order and comments).
 func mapSet(m *yaml.Node, key string, val *yaml.Node) {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if m.Content[i].Value == key {
@@ -156,7 +161,7 @@ func mapSet(m *yaml.Node, key string, val *yaml.Node) {
 	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, val)
 }
 
-// mapDel 删除键;不存在返回 false。
+// mapDel deletes a key; returns false when absent.
 func mapDel(m *yaml.Node, key string) bool {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if m.Content[i].Value == key {
@@ -167,7 +172,7 @@ func mapDel(m *yaml.Node, key string) bool {
 	return false
 }
 
-// seqAppend 去重追加标量。
+// seqAppend appends a scalar, deduplicated.
 func seqAppend(s *yaml.Node, val string) {
 	for _, c := range s.Content {
 		if c.Value == val {
@@ -177,7 +182,7 @@ func seqAppend(s *yaml.Node, val string) {
 	s.Content = append(s.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: val})
 }
 
-// seqRemove 移除标量;返回是否发生变更。
+// seqRemove removes a scalar; returns whether anything changed.
 func seqRemove(s *yaml.Node, val string) bool {
 	for i, c := range s.Content {
 		if c.Value == val {
@@ -188,7 +193,7 @@ func seqRemove(s *yaml.Node, val string) bool {
 	return false
 }
 
-// Providers 返回全部 provider 名称(保持配置顺序)。
+// Providers returns all provider names (in config order).
 func (e *Editor) Providers() []string {
 	var out []string
 	if pm := mapGet(e.topMap(), "proxy-providers"); pm != nil && pm.Kind == yaml.MappingNode {
@@ -199,13 +204,13 @@ func (e *Editor) Providers() []string {
 	return out
 }
 
-// HasAnchorP 检查配置中是否存在锚点 &p(sub import 的前置要求)。
+// HasAnchorP checks whether the config contains the &p anchor (a precondition of sub import).
 func (e *Editor) HasAnchorP() bool {
 	v := mapGet(e.topMap(), "p")
 	return v != nil && v.Anchor == "p"
 }
 
-// ProviderURL 返回指定 provider 的 url(用于 status 展示与占位符检测)。
+// ProviderURL returns a provider's url (used by status display and placeholder detection).
 func (e *Editor) ProviderURL(name string) (string, bool) {
 	pm := mapGet(e.topMap(), "proxy-providers")
 	if pm == nil {
@@ -221,8 +226,9 @@ func (e *Editor) ProviderURL(name string) (string, bool) {
 	return "", true
 }
 
-// SetProvider 写入/更新 provider:url + path,条目复用锚点 <<: *p;
-// 已有条目仅改 url/path 两键,其余键与注释保持原样。
+// SetProvider writes/updates a provider: url + path, the entry reusing the <<: *p
+// anchor; an existing entry has only its url/path keys changed, every other key and
+// comment stays as-is.
 func (e *Editor) SetProvider(name, url, cacheRelPath string) error {
 	if !e.HasAnchorP() {
 		return fmt.Errorf("config is missing anchor &p (sub import depends on it to generate provider entries; the base template provides it)")
@@ -250,11 +256,14 @@ func (e *Editor) SetProvider(name, url, cacheRelPath string) error {
 	return nil
 }
 
-// SetProviderType 切换 provider 读取方式(file=true 时 type: file 读本地缓存、不刷新远程;
-// false 时删除显式 type,回落到锚点 <<: *p 的 type: http 自动刷新)。
+// SetProviderType switches a provider's read mode (file=true sets type: file to read the
+// local cache without refreshing the remote; false removes the explicit type and falls
+// back to the anchor <<: *p's type: http auto-refresh).
 //
-// 用于 mihomo 无法原生解析的订阅格式(sing-box/Surge/base64-Clash):sub import 已把内容
-// 归一化成 Clash YAML 写入缓存,必须切 file,否则内核重启时会重新拉原始 URL 再解析失败。
+// Used for subscription formats mihomo cannot parse natively (sing-box/Surge/base64-
+// Clash): sub import has already normalized the content into Clash YAML in the cache, so
+// the provider must switch to file — otherwise the kernel re-fetches the original URL on
+// restart and fails to parse again.
 func (e *Editor) SetProviderType(name string, file bool) error {
 	pm := mapGet(e.topMap(), "proxy-providers")
 	if pm == nil || pm.Kind != yaml.MappingNode {
@@ -272,7 +281,7 @@ func (e *Editor) SetProviderType(name string, file bool) error {
 	return nil
 }
 
-// RemoveProvider 删除 provider 条目。
+// RemoveProvider deletes a provider entry.
 func (e *Editor) RemoveProvider(name string) bool {
 	pm := mapGet(e.topMap(), "proxy-providers")
 	if pm == nil {
@@ -281,18 +290,21 @@ func (e *Editor) RemoveProvider(name string) bool {
 	return mapDel(pm, name)
 }
 
-// WireProvider 把 name 融合进 use 列表(add=true)或移除(add=false)。
+// WireProvider adds name into the use lists (add=true) or removes it (add=false).
 //
-// 融合规则(基础模板优化路径优先):
-//  1. 顶层锚点持有者 pr/prd/use 的 use 序列 —— 一处修改,全部消费组生效
-//  2. 无锚点持有者时(自定义配置):遍历 proxy-groups,凡 use 非空的组逐个追加
+// Wiring rules (the base template's optimized path first):
+//  1. the top-level anchor holders pr/prd/use's use sequences — one change, every
+//     consuming group follows
+//  2. without anchor holders (custom config): walk proxy-groups and append to every
+//     group whose use is non-empty
 //
-// groups 非空时(--group):只改指定组,组内无 use 键则显式创建(覆盖 merge 语义)。
+// With a non-empty groups (--group): only the named groups are touched; a group without
+// a use key gets one created explicitly (overriding merge semantics).
 func (e *Editor) WireProvider(name string, add bool, groups []string) int {
 	tm := e.topMap()
 	changed := 0
 	if len(groups) == 0 {
-		// 路径 1:锚点持有者
+		// Path 1: anchor holders
 		for _, holder := range []string{"pr", "prd", "use"} {
 			hm := mapGet(tm, holder)
 			if hm == nil {
@@ -310,7 +322,7 @@ func (e *Editor) WireProvider(name string, add bool, groups []string) int {
 		if changed > 0 {
 			return changed
 		}
-		// 路径 2:自定义配置,遍历组
+		// Path 2: custom config, walk the groups
 		if gl := mapGet(tm, "proxy-groups"); gl != nil && gl.Kind == yaml.SequenceNode {
 			for _, g := range gl.Content {
 				if use := mapGet(g, "use"); use != nil && use.Kind == yaml.SequenceNode && len(use.Content) > 0 {
@@ -325,7 +337,7 @@ func (e *Editor) WireProvider(name string, add bool, groups []string) int {
 		}
 		return changed
 	}
-	// --group 显式指定
+	// --group explicit selection
 	gl := mapGet(tm, "proxy-groups")
 	if gl == nil || gl.Kind != yaml.SequenceNode {
 		return 0
@@ -355,9 +367,12 @@ func (e *Editor) WireProvider(name string, add bool, groups []string) int {
 	return changed
 }
 
-// PruneDerived 根据实际节点名剔除无匹配的派生组(带 filter 的地区/类型组),只保留有效分组。
-// 被剔除的组名同步从锚点持有者(pr/prd)与 DNS 组的 proxies 列表中移除,避免悬空引用。
-// 返回剔除的组数。nodeNames 应覆盖全部 provider(含新导入订阅),避免误删仍被其他订阅命中的组。
+// PruneDerived removes derived groups (region/type groups with a filter) that match no
+// actual node, keeping only effective groups. The removed group names are also stripped
+// from the anchor holders' (pr/prd) and the DNS group's proxies lists, avoiding dangling
+// references. Returns the number of pruned groups. nodeNames must cover every provider
+// (including the newly imported subscription) so groups still hit by another
+// subscription are not removed by mistake.
 func (e *Editor) PruneDerived(nodeNames []string) int {
 	tm := e.topMap()
 	gl := mapGet(tm, "proxy-groups")
@@ -369,12 +384,12 @@ func (e *Editor) PruneDerived(nodeNames []string) int {
 	for _, g := range gl.Content {
 		f := mapGet(g, "filter")
 		if f == nil || f.Value == "" {
-			keep = append(keep, g) // 无 filter 的组(应用组/兜底组)不参与剪枝
+			keep = append(keep, g) // groups without a filter (app groups / the fallback group) never get pruned
 			continue
 		}
 		re, err := regexp.Compile(f.Value)
 		if err != nil {
-			keep = append(keep, g) // 无效 filter 保留,交由内嵌内核校验报错
+			keep = append(keep, g) // invalid filter kept; the embedded kernel's validation will report it
 			continue
 		}
 		hit := false
@@ -394,7 +409,7 @@ func (e *Editor) PruneDerived(nodeNames []string) int {
 		return 0
 	}
 	gl.Content = keep
-	// 从锚点持有者与 DNS 组的 proxies 移除被剔除的组名
+	// Remove the pruned group names from the anchor holders' and the DNS group's proxies
 	for _, holder := range []string{"pr", "prd"} {
 		if hm := mapGet(tm, holder); hm != nil {
 			if px := mapGet(hm, "proxies"); px != nil && px.Kind == yaml.SequenceNode {
@@ -416,13 +431,15 @@ func (e *Editor) PruneDerived(nodeNames []string) int {
 	return len(prune)
 }
 
-// Backup / Restore / ClearBackup 事务配套:修改前备份,失败恢复。
-// 后缀随程序名派生(constants.BackupSuffix),与 merge 的 premerge 共用 backupFile/restoreFile 实现。
+// Backup / Restore / ClearBackup are the transaction companions: back up before
+// mutating, restore on failure. The suffix derives from the program name
+// (constants.BackupSuffix); bak and premerge share the backupFile/restoreFile impl.
 func Backup(path string) error  { return backupFile(path, constants.BackupSuffix()) }
 func Restore(path string) error { return restoreFile(path, constants.BackupSuffix()) }
 func ClearBackup(path string)   { os.Remove(path + constants.BackupSuffix()) }
 
-// backupFile / restoreFile 是 bak 与 premerge 的共享实现(仅后缀不同)。
+// backupFile / restoreFile are the shared implementation for bak and premerge (only the
+// suffix differs).
 func backupFile(path, suffix string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -439,7 +456,8 @@ func restoreFile(path, suffix string) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
-// SetMode 切换 tun/tproxy 配置变体(mode 命令用;tun 块与模板常量保持一致)。
+// SetMode switches the tun/tproxy config variant (used by the mode command; the tun block
+// stays consistent with the template constants).
 func (e *Editor) SetMode(tproxy bool, tproxyPort int) {
 	tm := e.topMap()
 	if tproxy {
@@ -474,8 +492,8 @@ func (e *Editor) SetMode(tproxy bool, tproxyPort int) {
 	mapSet(tm, "tun", tun)
 }
 
-// SetPath 改变 Save 目标(预览/临时校验用)。
+// SetPath changes the Save target (for previews / temporary validation).
 func (e *Editor) SetPath(p string) { e.path = p }
 
-// Path 返回当前落盘路径。
+// Path returns the current persist target.
 func (e *Editor) Path() string { return e.path }

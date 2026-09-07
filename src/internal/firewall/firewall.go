@@ -1,13 +1,20 @@
-// Package firewall 管理 panoxy 自有防火墙规则(DNS 劫持;TPROXY 模式另含打标/策略路由)。
+// Package firewall manages panoxy's own firewall rules (DNS hijack; TPROXY mode adds
+// marking/policy routing on top).
 //
-// 设计要点:
-//   - 独立表 inet <程序名>(= constants.NftTable,随编译期 ProgName 注入),绝不复用系统 nat/filter 表 → CleanAll = 删整表,幂等
-//   - 启动无条件 CleanAll 再 Apply → kill -9/OOM 残留随 systemctl restart 自愈
-//   - 本机 OUTPUT 劫持排除:保留网段/回环(防内网 DNS 异常)+ mark 6666(内核自身
-//     上游查询,防 DNS 回环死锁 —— 与配置模板 routing-mark 联动)
-//   - DNS 劫持用 redirect(内核监听 [::]:1053 双栈):OUTPUT 落 127.0.0.1,
-//     PREROUTING 落入接口主地址,v4/v6 通吃,无需 route_localnet
-//   - 唯一后端 nftables(内核 4.18+ 均含 nf_tproxy 支持),不保留 iptables 兜底
+// Design points:
+//   - a dedicated table inet <prog> (= constants.NftTable, following the compile-time
+//     ProgName injection), never reusing the system nat/filter tables ->
+//     CleanAll = drop the whole table, idempotent
+//   - startup unconditionally CleanAll's before Apply -> kill -9/OOM leftovers
+//     self-heal on every systemctl restart
+//   - local OUTPUT hijack exemptions: reserved ranges/loopback (protects LAN DNS) +
+//     mark 6666 (the kernel's own upstream queries, preventing a DNS loop deadlock —
+//     coupled with the config template's routing-mark)
+//   - DNS hijack uses redirect (the kernel listens on [::]:1053 dual-stack): OUTPUT
+//     lands on 127.0.0.1, PREROUTING lands on the ingress interface's primary address,
+//     v4/v6 both covered, no route_localnet needed
+//   - nftables is the only backend (every kernel 4.18+ has nf_tproxy support); no
+//     iptables fallback is kept
 package firewall
 
 import (
@@ -19,10 +26,11 @@ import (
 	"github.com/deadship2003/panoxy/internal/logx"
 )
 
-// BackendName 是唯一防火墙后端名(健康报告展示用)。
+// BackendName is the sole firewall backend name (shown in health reports).
 const BackendName = "nftables"
 
-// ensureNft 校验 nftables 用户态可用;panoxy 只支持 nftables,缺失即快速失败并给出安装提示。
+// ensureNft verifies the nftables userspace is available; panoxy supports nftables only,
+// so a missing binary fails fast with an install hint.
 func ensureNft() error {
 	if _, err := exec.LookPath("nft"); err != nil {
 		return fmt.Errorf("nftables not found: panoxy requires the nftables userspace (install the 'nftables' package)")
@@ -41,7 +49,8 @@ func runNft(script string) error {
 	return nil
 }
 
-// CleanAll 无条件删除自有表 + 策略路由(启动第一步;表不存在视为成功,幂等)。
+// CleanAll unconditionally drops the own table + policy routing (the first step of
+// startup; a missing table counts as success — idempotent).
 func CleanAll() error {
 	if err := ensureNft(); err != nil {
 		return err
@@ -59,7 +68,7 @@ func CleanAll() error {
 	return nil
 }
 
-// ApplyDnsHijack TUN 模式:仅 DNS 劫持(先 CleanAll 再加载,幂等)。
+// ApplyDnsHijack is TUN mode: DNS hijack only (CleanAll first, then load — idempotent).
 func ApplyDnsHijack() error {
 	if err := CleanAll(); err != nil {
 		return err
@@ -71,7 +80,8 @@ func ApplyDnsHijack() error {
 	return nil
 }
 
-// ApplyTproxy TPROXY 模式:DNS + mark/策略路由/tproxy 链(先 CleanAll 再加载,幂等)。
+// ApplyTproxy is TPROXY mode: DNS + mark/policy-routing/tproxy chains (CleanAll first,
+// then load — idempotent).
 func ApplyTproxy() error {
 	if err := CleanAll(); err != nil {
 		return err
@@ -87,7 +97,7 @@ func ApplyTproxy() error {
 	return nil
 }
 
-// HasStaleRules 表存在即视为有残留规则。
+// HasStaleRules: the table existing at all counts as leftover rules present.
 func HasStaleRules() (bool, error) {
 	if err := ensureNft(); err != nil {
 		return false, err
@@ -104,8 +114,9 @@ func HasStaleRules() (bool, error) {
 	return true, nil
 }
 
-// CheckTproxySupport 用最小 tproxy 规则做 nft -c 干跑:一次校验用户态语法 + 内核 nf_tproxy 支持。
-// nftables TPROXY 走 inet 族 `tproxy to :port` 语句(依赖 nf_tproxy_ipv4/ipv6 模块)。
+// CheckTproxySupport dry-runs a minimal tproxy rule via nft -c: validates both the
+// userspace syntax and the kernel's nf_tproxy support in one shot. nftables TPROXY uses
+// the inet family `tproxy to :port` statement (needs the nf_tproxy_ipv4/ipv6 modules).
 func CheckTproxySupport() error {
 	if err := ensureNft(); err != nil {
 		return err

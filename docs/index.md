@@ -1,18 +1,18 @@
-# panoxy 文档
+# panoxy documentation
 
-[返回 README](../README.md)
+[Back to README](../README.md)
 
-## 目录
+## Contents
 
-1. [TPROXY 模式指南](TPROXY.md) — 前置检测、切换、验证、网络拓扑、故障排查
-2. [从 bash 版迁移](MIGRATION.md) — 升级步骤
-3. [已知限制](KNOWN-LIMITATIONS.md) — 内核限制、DoH、二进制/CPU 选型
-4. [故障排查](TROUBLESHOOTING.md) — 常见问题与解决方案
-5. [技术笔记](TECHNICAL-NOTES.md) — TPROXY 本机闭环故障分析、双栈 Fake-IP 设计
+1. [TPROXY mode guide](TPROXY.md) — prechecks, switching, verification, network topology, troubleshooting
+2. [Migrating from the bash version](MIGRATION.md) — migration/upgrade steps
+3. [Known limitations](KNOWN-LIMITATIONS.md) — kernel limits, DoH, binary/CPU selection
+4. [Troubleshooting](TROUBLESHOOTING.md) — common problems and solutions
+5. [Technical notes](TECHNICAL-NOTES.md) — TPROXY local-loopback failure analysis, dual-stack fake-ip design
 
-## 快速链接
+## Quick links
 
-- [编译指南](../README.md#️-编译)
-- [打包指南](../README.md#️-打包)
-- [命令参考](../README.md#️-命令参考)
-- [测试说明](../README.md#️-测试)
+- [Build guide](../README.md#️-build)
+- [Packaging guide](../README.md#️-packaging)
+- [Command reference](../README.md#️-command-reference)
+- [Testing](../README.md#️-testing)

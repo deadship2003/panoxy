@@ -1,7 +1,9 @@
-// Package mihomoapi 封装 mihomo external-controller REST API。
-// 注意(实测事实,写入注释防止误用):PUT /configs 热重载会重新 parse 并重建
-// provider 对象,但不会重拉订阅内容(Initial 只读本地缓存、不碰远程 URL);
-// 免重启重拉用 PUT /providers/proxies/{name},增删 provider 或重连分组仍须重启进程。
+// Package mihomoapi wraps the mihomo external-controller REST API.
+// Note (verified by experiment, recorded here to prevent misuse): PUT /configs hot-reload
+// re-parses the config and rebuilds provider objects but does NOT re-fetch subscription
+// content (Initial only reads the local cache, never the remote URL); a no-restart
+// re-fetch is PUT /providers/proxies/{name}, while adding/removing providers or rewiring
+// groups still requires a process restart.
 package mihomoapi
 
 import (
@@ -22,12 +24,13 @@ import (
 type Client struct {
 	Base   string // http://127.0.0.1:9999
 	Secret string
-	Mixed  int // mixed-port(本机代理跳板)
+	Mixed  int // mixed-port (the local proxy stepping stone)
 	hc     *http.Client
 }
 
-// NewFromConf 从 mihomo 配置文件解析 secret/external-controller/mixed-port,
-// 环境变量 PANIXY_API/PANIXY_SECRET/PANIXY_PROXY_PORT 可覆盖(沙箱测试用)。
+// NewFromConf parses secret/external-controller/mixed-port from the mihomo config file;
+// the env vars <PROG>_API/<PROG>_SECRET/<PROG>_PROXY_PORT can override them (sandbox
+// testing).
 func NewFromConf(confPath string) *Client {
 	c := &Client{hc: &http.Client{Timeout: 5 * time.Second}}
 	var raw struct {
@@ -36,7 +39,7 @@ func NewFromConf(confPath string) *Client {
 		MixedPort          int    `yaml:"mixed-port"`
 	}
 	if b, err := os.ReadFile(confPath); err == nil {
-		yaml.Unmarshal(b, &raw) // 解析失败则全走默认
+		yaml.Unmarshal(b, &raw) // on parse failure everything falls back to defaults
 	}
 	c.Secret = raw.Secret
 	if c.Secret == "" {
@@ -67,7 +70,7 @@ func portOf(ctrl string, def int) string {
 	return fmt.Sprint(def)
 }
 
-// Proxy 返回本机 mixed-port 代理地址(未配置时为空串)。
+// Proxy returns the local mixed-port proxy address (empty string when unset).
 func (c *Client) Proxy() string {
 	if c.Mixed <= 0 {
 		return ""
@@ -75,7 +78,7 @@ func (c *Client) Proxy() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", c.Mixed)
 }
 
-// call 发送带密钥的 API 请求并返回响应体;状态码 ≥300 视为错误。
+// call sends an authenticated API request and returns the body; status >= 300 is an error.
 func (c *Client) call(method, path string, body any) ([]byte, error) {
 	var rdr io.Reader
 	if body != nil {
@@ -102,7 +105,7 @@ func (c *Client) call(method, path string, body any) ([]byte, error) {
 	return b, nil
 }
 
-// Version 返回内核版本号(如 v1.19.30);不可达返回错误。
+// Version returns the kernel version string (e.g. v1.19.30); an unreachable API is an error.
 func (c *Client) Version() (string, error) {
 	b, err := c.call("GET", "/version", nil)
 	if err != nil {
@@ -117,7 +120,7 @@ func (c *Client) Version() (string, error) {
 	return v.Version, nil
 }
 
-// ProviderStat 单个订阅的健康快照。
+// ProviderStat is one subscription's health snapshot.
 type ProviderStat struct {
 	Name  string `json:"name"`
 	Nodes int    `json:"nodes"`
@@ -133,7 +136,8 @@ type providerResp struct {
 	} `json:"proxies"`
 }
 
-// Provider 查询单个 provider 节点数(正确解码 JSON,而非 bash 时代的 grep 计数)。
+// Provider queries a single provider's node count (properly decoding the JSON, unlike
+// the bash-era grep counting).
 func (c *Client) Provider(name string) (ProviderStat, error) {
 	b, err := c.call("GET", "/providers/proxies/"+name, nil)
 	var st ProviderStat
@@ -152,13 +156,14 @@ func (c *Client) Provider(name string) (ProviderStat, error) {
 	return st, nil
 }
 
-// ReloadConf 热重载配置:会重建 provider 对象但不重拉订阅内容,仅适用于不改动 provider 的变更。
+// ReloadConf hot-reloads the config: provider objects are rebuilt but subscription
+// content is not re-fetched, so this only suits changes that leave providers untouched.
 func (c *Client) ReloadConf(path string) error {
 	_, err := c.call("PUT", "/configs?force=0", map[string]string{"path": path})
 	return err
 }
 
-// RawGet 探活类 GET:返回 HTTP 状态码字符串(不做 JSON 解码)。
+// RawGet is a liveness-probe GET: returns the HTTP status code string (no JSON decoding).
 func (c *Client) RawGet(path string) (string, error) {
 	resp, err := c.hc.Get(c.Base + path)
 	if err != nil {

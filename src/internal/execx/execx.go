@@ -1,4 +1,5 @@
-// Package execx 统一外部命令执行:CombinedOutput + debug 级原样回显(零遮蔽)。
+// Package execx unifies external command execution: CombinedOutput + verbatim echo at
+// the trace level (zero obfuscation).
 package execx
 
 import (
@@ -9,15 +10,16 @@ import (
 	"github.com/deadship2003/panoxy/internal/logx"
 )
 
-// Run 执行并返回合并输出;失败时错误信息附带输出(教训:内核日志走 stdout,
-// 只看 stderr 会"静默失败")。
+// Run executes a command and returns its combined output; on failure the error carries
+// the output (lesson learned: the kernel logs to stdout, so watching only stderr means
+// "silent failure").
 func Run(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	logx.DebugCmd(name, args, string(out), err)
 	return string(out), err
 }
 
-// RunOK 要求成功,失败返回带上下文的错误。
+// RunOK requires success and returns a contextual error on failure.
 func RunOK(what, name string, args ...string) (string, error) {
 	out, err := Run(name, args...)
 	if err != nil {
@@ -26,7 +28,8 @@ func RunOK(what, name string, args ...string) (string, error) {
 	return out, nil
 }
 
-// RunShell 执行 shell 行(用于含 || 的幂等命令串;仅限常量生成的命令,无注入面)。
+// RunShell executes a shell line (for idempotent command chains containing ||; only ever
+// fed constant-built commands, so there is no injection surface).
 func RunShell(line string) (string, error) {
 	out, err := exec.Command("sh", "-c", line).CombinedOutput()
 	logx.DebugCmd("sh", []string{"-c", line}, string(out), err)

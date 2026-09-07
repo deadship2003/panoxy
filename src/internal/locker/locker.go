@@ -1,5 +1,6 @@
-// Package locker 提供 flock 文件互斥:写命令(deploy/install/sub import/del/upgrade/
-// rollback/uninstall/mode)加锁,读命令(status/log/check/sub list)不加。
+// Package locker provides flock-based mutual exclusion: write commands (deploy/install/
+// sub import/sub del/upgrade/rollback/uninstall/mode) take the lock, read commands
+// (status/log/check/sub list) do not.
 package locker
 
 import (
@@ -14,7 +15,7 @@ import (
 type Locker struct {
 	f  *os.File
 	ok bool
-	re bool // 进程内重入(deploy→install 同进程复用已持锁)
+	re bool // in-process re-entry (deploy -> install reuses the already-held lock)
 }
 
 var (
@@ -22,7 +23,8 @@ var (
 	locked bool
 )
 
-// Lock 获取互斥锁;被占用返回错误(不等待)。进程内可重入(deploy 内调 install)。
+// Lock acquires the mutex; returns an error when already held (no waiting). In-process
+// re-entry is allowed (install nested inside deploy).
 func Lock(path string) (*Locker, error) {
 	mu.Lock()
 	if locked {
@@ -32,7 +34,8 @@ func Lock(path string) (*Locker, error) {
 	mu.Unlock()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		// 锁文件不可写(如只读环境):降级为无锁,行为与 bash 版一致
+		// Lock file not writable (e.g. a read-only environment): degrade to no lock,
+		// matching the bash-version behavior.
 		fmt.Fprintf(os.Stderr, "[%s] WARN lock file unavailable (%v), continuing without a lock\n", constants.ProgName, err)
 		return &Locker{}, nil
 	}
@@ -48,7 +51,7 @@ func Lock(path string) (*Locker, error) {
 
 func (l *Locker) Unlock() {
 	if l == nil || l.re {
-		return // 重入持有者不解锁,由最外层释放
+		return // a re-entrant holder does not unlock; the outermost holder releases
 	}
 	if !l.ok {
 		return

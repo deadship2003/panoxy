@@ -1,49 +1,55 @@
-// Package constants 定义 panoxy 全局常量:目录布局、防火墙标识、端口。
-// 布局原则:/opt/<ProgName> 自包含数据家目录;/etc/<ProgName>.yaml 是管理员手编的系统级配置(唯一事实源)。
+// Package constants defines the panoxy global constants: directory layout, firewall
+// identities, ports.
+// Layout principle: /opt/<ProgName> is the self-contained data home; /etc/<ProgName>.yaml
+// is the admin-hand-edited system-level config (the single source of truth).
 package constants
 
 import "strings"
 
-// ProgName 程序名:编译期可用
+// ProgName is the program name, injectable at build time via
 //
 //	-ldflags "-X github.com/deadship2003/panoxy/internal/constants.ProgName=myproxy"
 //
-// 注入。一旦注入,派生路径/单元名/防火墙表链/env 前缀/状态文件/备份后缀全部跟随(见 EnvPrefix)。
-// 缺省 "panoxy"(Makefile 的 PROG / build.sh 的 --prog 亦默认此名)。
+// Once injected, every derived artifact follows it: paths, unit names, firewall table and
+// chains, env prefix, state file, backup suffixes (see EnvPrefix). The default is "panoxy"
+// (the Makefile PROG variable / build.sh --prog flag default to the same name).
 var ProgName = "panoxy"
 
-// EnvPrefix 环境变量前缀:PANOXY_ → <PROG>_(小写转大写,- 转 _)。
+// EnvPrefix returns the environment-variable prefix: PANOXY_ -> <PROG>_ (uppercased, - to _).
 func EnvPrefix() string { return strings.ToUpper(strings.ReplaceAll(ProgName, "-", "_")) }
 
 const (
 	Version = "0.0.1"
 
-	// 以下为默认值,测试/沙箱可用环境变量覆盖(见 internal/paths)
+	// Defaults below; tests/sandboxes can override them via env vars (see internal/paths).
 	DefUnitDir = "/etc/systemd/system"
 
-	// 防火墙:独立表,绝不复用系统 nat/filter 表;启动无条件 CleanAll 实现 restart 自愈
+	// Firewall: a dedicated table, never reusing the system nat/filter tables; startup
+	// runs CleanAll unconditionally, which is what makes restart self-healing.
 	NftFamily = "inet"
 
-	MarkSelf    = 6666 // 内核 routing-mark:自身出站流量标记,防火墙据此放行防 DNS 回环(勿改,与配置模板联动)
-	MarkTproxy  = 1    // TPROXY 模式流量标记
-	TproxyTable = 100  // TPROXY 策略路由表号
-	TproxyPort  = 7893 // 内核 tproxy-port
+	MarkSelf    = 6666 // kernel routing-mark: tags the kernel's own outbound traffic so the firewall can exempt it and prevent a DNS loop (do not change; coupled with the config template)
+	MarkTproxy  = 1    // TPROXY-mode traffic mark
+	TproxyTable = 100  // TPROXY policy-routing table number
+	TproxyPort  = 7893 // kernel tproxy-port
 
-	DnsListenPort = 1053 // 内核 DNS 监听端口(防火墙 redirect 目标)
+	DnsListenPort = 1053 // kernel DNS listen port (the firewall redirect target)
 	MixedPortDef  = 33833
 	ApiPortDef    = 9999
-	DefSecret     = "deadship" // 面板/API 默认密钥(init/deploy --secret 默认值,与 API 客户端回退同源)
+	DefSecret     = "deadship" // default panel/API secret (init/deploy --secret default; same source as the API client fallback)
 )
 
-// mihomo 上游内嵌内核基线:Alpha 分支锁定 commit(subtree 引入的版本,即 third_party/mihomo 内容对应)。
-// upstream 命令据此探测上游是否有新提交;subtree 同步后需同步更新此常量与 third_party/mihomo/.git-subtree-source。
+// Embedded-kernel upstream baseline: the mihomo Alpha branch commit locked at subtree
+// import time (i.e. what src/third_party/mihomo contains). The upstream command uses
+// this to detect new upstream commits; after a subtree sync, update this constant and
+// third_party/mihomo/.git-subtree-source together.
 const (
 	UpstreamRepo         = "https://github.com/MetaCubeX/mihomo"
 	UpstreamBranch       = "Alpha"
 	UpstreamMihomoCommit = "65287f0"
 )
 
-// 以下默认值随 ProgName 派生(编译注入 ProgName 后自动跟随)。
+// Defaults below derive from ProgName (they follow a compile-time ProgName injection).
 var (
 	DefRootDir    = "/opt/" + ProgName
 	DefConfPath   = "/etc/" + ProgName + ".yaml"
@@ -54,6 +60,7 @@ var (
 	NftTable      = ProgName
 )
 
-// BackupSuffix / PremergeSuffix 备份后缀:随程序名派生(config 事务备份与 merge 预合并备份共用)。
+// BackupSuffix / PremergeSuffix are the backup file suffixes, derived from the program
+// name (shared by the config transaction backup and the merge pre-merge backup).
 func BackupSuffix() string   { return "." + ProgName + "-bak" }
 func PremergeSuffix() string { return "." + ProgName + "-premerge" }

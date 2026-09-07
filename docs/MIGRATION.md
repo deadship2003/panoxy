@@ -1,28 +1,33 @@
-## 从 bash 版迁移与升级
+## Migrating from the bash version and upgrading
 
-panoxy 是 bash 版的 Go 重写,分两种操作:**全新迁移**(bash → panoxy,一次性)
-与**就地升级**(panoxy → 新版本,保留配置与订阅)。迁移不做自动转换:检测到
-bash 残留会中止并提示,由用户手工清理。
+panoxy is a Go rewrite of the bash version; there are two flows: **fresh migration**
+(bash -> panoxy, one time) and **in-place upgrade** (panoxy -> a newer version, config and
+subscriptions kept). Migration does no automatic conversion: when bash leftovers are
+detected it aborts with guidance, and the user cleans up by hand.
 
-### 一、从 bash 版全新迁移
+### 1. Fresh migration from the bash version
 
-bash 版残留特征:systemd 单元含 `resolvectl`、旧配置 `/etc/clash.yaml` 含
-`tun.dns-hijack` 段。
+Bash-version leftover signatures: a systemd unit containing `resolvectl`, or the old
+config `/etc/clash.yaml` containing a `tun.dns-hijack` section.
 
-1. 停服并清单元:`sudo panoxy uninstall`(停服务、清防火墙、删单元/sysctl/man;
-   保留 `/opt/panoxy` 数据与 `/etc/panoxy.yaml` 配置)
-2. 删除或清空旧配置 `/etc/clash.yaml`;想保留分组可手工去掉 `tun.dns-hijack` 段
-3. 部署:离线包 `sudo ./panoxy deploy`(或裸机联网 `sudo panoxy init`)
-4. 导入订阅:`sudo panoxy sub import`
+1. Stop the service and clear the units: `sudo panoxy uninstall` (stops the service,
+   cleans the firewall, removes the units/sysctl/man pages; keeps the `/opt/panoxy` data
+   and the `/etc/panoxy.yaml` config)
+2. Delete or empty the old config `/etc/clash.yaml`; to keep your groups, manually remove
+   the `tun.dns-hijack` section
+3. Deploy: from an offline package `sudo ./panoxy deploy` (or on a networked bare machine
+   `sudo panoxy init`)
+4. Import the subscription: `sudo panoxy sub import`
 
-> 护栏:deploy/init 检测到 bash 残留(单元含 resolvectl / 配置含 dns-hijack)
-> 会主动中止并提示,清干净后重试即可(`panoxy deploy --dry-run` 可先预检)。
+> Guard rail: when deploy/init detects bash leftovers (a unit with resolvectl / a config
+> with dns-hijack) it aborts with guidance; clean them up and retry (`panoxy deploy
+> --dry-run` prechecks without changes).
 
-### 二、就地升级(保留配置与订阅)
+### 2. In-place upgrade (keep config and subscriptions)
 
-内核已内嵌进 CLI,大多数升级只换二进制即可:
+The kernel is embedded in the CLI, so most upgrades only swap the binary:
 
-- 方式 A(推荐,顺带刷新单元/man/sysctl/默认配置基线):
-  `sudo panoxy stop` → 用**新编译的二进制** `sudo ./dist/panoxy redeploy`
-  (redeploy 会把当前运行的二进制复制到 `/usr/local/bin/panoxy`)
-- 方式 B(只换二进制):`cp dist/panoxy /usr/local/bin/panoxy` → `sudo panoxy restart`
+- Method A (recommended; also refreshes the units/man/sysctl/default-config baseline):
+  `sudo panoxy stop` -> run **the freshly built binary** with `sudo ./bin/panoxy redeploy`
+  (redeploy copies the currently running binary to `/usr/local/bin/panoxy`)
+- Method B (binary swap only): `cp bin/panoxy /usr/local/bin/panoxy` -> `sudo panoxy restart`

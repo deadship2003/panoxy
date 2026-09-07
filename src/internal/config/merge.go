@@ -1,12 +1,14 @@
-// merge-conf 核心:叠加式融合(同名组字段级合并,非替换)。
+// merge-conf core: additive merge (same-name groups merge at field level, not replace).
 //
-// 融合策略(用户确认):
+// Merge strategy (user-confirmed):
 //
-//	同名组:  字段级合并(proxies/use 并集,标量个人覆盖,个人新增字段带入)
-//	新增组:  追加到末尾
-//	基底组:  保留(不被删除,引用不断链)
-//	规则:    个人前置(优先匹配)+ 基底兜底(MATCH 排最后,去重)
-//	备份:    融合前 → <prog>-premerge 后缀;失败自动恢复;--rollback 手动回滚
+//	same-name group:  field-level merge (proxies/use union, scalars overridden by the
+//	                  personal side, personal-added fields carried in)
+//	new group:        appended at the end
+//	base groups:      kept (never deleted, references never dangle)
+//	rules:            personal first (matched earlier) + base fallback (MATCH last, deduped)
+//	backup:           before merging -> <prog>-premerge suffix; auto-restore on failure;
+//	                  --rollback for a manual revert
 package config
 
 import (
@@ -19,20 +21,20 @@ import (
 )
 
 type MergeOpts struct {
-	DNSMine     bool // 个人 dns 段接管(listen 仍强制 [::]:1053 双栈)
-	NoWire      bool // 不把基底订阅接线进组
-	NoProxyWire bool // 不把个人 proxies 追加进组
+	DNSMine     bool // the personal dns section takes over (listen still forced to [::]:1053 dual-stack)
+	NoWire      bool // do not wire base subscriptions into groups
+	NoProxyWire bool // do not append personal proxies into groups
 }
 
 type MergeReport struct {
-	GroupsMerged  []string // 同名融合
-	GroupsAdded   []string // 个人新增
-	GroupsKept    []string // 基底保留
+	GroupsMerged  []string // merged by name
+	GroupsAdded   []string // added from personal
+	GroupsKept    []string // kept from base
 	RulesPersonal int
 	RulesBase     int
 	RulesDeduped  int
-	Taken         []string // 接管(个人)
-	Kept          []string // 保留(基底)
+	Taken         []string // taken over (personal)
+	Kept          []string // kept (base)
 	Providers     struct {
 		BaseKept []string
 		Personal []string
@@ -41,10 +43,10 @@ type MergeReport struct {
 	RuleProvidersAdded []string
 	PersonalProxies    []string
 	Adjustments        []string
-	BackupPath         string // premerge 备份路径(空=未备份)
+	BackupPath         string // premerge backup path (empty = not backed up)
 }
 
-// PremergeBackup 融合前备份(供 --rollback 恢复)。
+// PremergeBackup backs up before merging (for --rollback restores).
 func PremergeBackup(confPath string) (string, error) {
 	dst := confPath + constants.PremergeSuffix()
 	if err := backupFile(confPath, constants.PremergeSuffix()); err != nil {
@@ -53,7 +55,7 @@ func PremergeBackup(confPath string) (string, error) {
 	return dst, nil
 }
 
-// PremergeRestore 从 premerge 备份恢复。
+// PremergeRestore restores from the premerge backup.
 func PremergeRestore(confPath string) error {
 	if err := restoreFile(confPath, constants.PremergeSuffix()); err != nil {
 		return fmt.Errorf("no premerge backup: %w", err)
@@ -61,18 +63,18 @@ func PremergeRestore(confPath string) error {
 	return nil
 }
 
-// PremergeExists 判断 premerge 备份是否存在。
+// PremergeExists reports whether a premerge backup exists.
 func PremergeExists(confPath string) bool {
 	_, err := os.Stat(confPath + constants.PremergeSuffix())
 	return err == nil
 }
 
-// MergePersonal 叠加式融合:同名组合并 + 新增追加 + 基底保留。
+// MergePersonal is the additive merge: same-name groups merge + new ones append + base kept.
 func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error) {
 	tmB, tmS := e.topMap(), src.topMap()
 	r := &MergeReport{}
 
-	// 1) 标量接管:端口/密钥/控制器
+	// 1) scalar takeover: ports/secret/controller
 	for _, k := range []string{"mixed-port", "port", "socks-port", "secret", "external-controller"} {
 		if v := mapGet(tmS, k); v != nil {
 			mapSet(tmB, k, deepCopy(v))
@@ -80,7 +82,7 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 		}
 	}
 
-	// 2) proxies:追加(基底通常无)
+	// 2) proxies: append (the base usually has none)
 	if v := mapGet(tmS, "proxies"); v != nil && v.Kind == yaml.SequenceNode {
 		basePx := mapGet(tmB, "proxies")
 		if basePx == nil || basePx.Kind != yaml.SequenceNode {
@@ -96,7 +98,7 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 		r.Taken = append(r.Taken, "proxies (appended)")
 	}
 
-	// 3) proxy-groups:同名融合 + 新增追加 + 基底保留
+	// 3) proxy-groups: same-name merge + new append + base kept
 	if v := mapGet(tmS, "proxy-groups"); v != nil && v.Kind == yaml.SequenceNode {
 		baseGroups := mapGet(tmB, "proxy-groups")
 		if baseGroups == nil || baseGroups.Kind != yaml.SequenceNode {
@@ -104,7 +106,7 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 			mapSet(tmB, "proxy-groups", baseGroups)
 		}
 
-		// 建立基底组名→节点索引
+		// index the base groups by name -> node position
 		baseIdx := map[string]int{}
 		for i, g := range baseGroups.Content {
 			if n := mapGet(g, "name"); n != nil {
@@ -112,24 +114,24 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 			}
 		}
 
-		// 逐个处理个人组
+		// process the personal groups one by one
 		for _, pg := range v.Content {
 			pn := mapGet(pg, "name")
 			if pn == nil {
 				continue
 			}
 			if bi, ok := baseIdx[pn.Value]; ok {
-				// 同名:字段级融合
+				// same name: field-level merge
 				mergeGroupNodes(baseGroups.Content[bi], pg)
 				r.GroupsMerged = append(r.GroupsMerged, pn.Value)
 			} else {
-				// 新增:追加到末尾
+				// new: append at the end
 				baseGroups.Content = append(baseGroups.Content, deepCopy(pg))
 				r.GroupsAdded = append(r.GroupsAdded, pn.Value)
 			}
 		}
 
-		// 记录基底保留的组(未被个人覆盖的)
+		// record the base groups kept (not overridden by personal)
 		for _, g := range baseGroups.Content {
 			if n := mapGet(g, "name"); n != nil {
 				found := false
@@ -147,7 +149,7 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 		r.Taken = append(r.Taken, "proxy-groups (merged)")
 	}
 
-	// 4) rules:个人前置 + 基底兜底(去重,MATCH 排最后)
+	// 4) rules: personal first + base fallback (deduped, MATCH last)
 	if v := mapGet(tmS, "rules"); v != nil && v.Kind == yaml.SequenceNode {
 		baseRules := mapGet(tmB, "rules")
 		var baseList []string
@@ -193,10 +195,10 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 		r.Taken = append(r.Taken, "rules (personal-first + base fallback)")
 	}
 
-	// 5) 保留(基底):模式段/暗号/基础设施
+	// 5) kept (base): mode block / secret mark / infrastructure
 	r.Kept = append(r.Kept, "tun/tproxy-port (mode block)", "routing-mark", "dns.listen", "external-ui", "geo*", "ntp", "sniffer", "profile")
 
-	// 6) dns:默认基底;--dns mine 时接管但强制 listen
+	// 6) dns: base by default; with --dns mine the personal side takes over but listen is forced
 	if opts.DNSMine {
 		if d := mapGet(tmS, "dns"); d != nil {
 			dn := deepCopy(d)
@@ -206,7 +208,7 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 		}
 	}
 
-	// 7) rule-providers 合并(同名个人优先)
+	// 7) rule-providers merge (same name: personal wins)
 	if rpS := mapGet(tmS, "rule-providers"); rpS != nil && rpS.Kind == yaml.MappingNode {
 		rpB := mapGet(tmB, "rule-providers")
 		if rpB == nil || rpB.Kind != yaml.MappingNode {
@@ -220,7 +222,7 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 		}
 	}
 
-	// 8) proxy-providers 合并(同名基底优先)
+	// 8) proxy-providers merge (same name: base wins)
 	if ppS := mapGet(tmS, "proxy-providers"); ppS != nil && ppS.Kind == yaml.MappingNode {
 		ppB := mapGet(tmB, "proxy-providers")
 		if ppB == nil || ppB.Kind != yaml.MappingNode {
@@ -244,7 +246,7 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 		}
 	}
 
-	// 9) 占位退场
+	// 9) placeholder retirement
 	ppNow := mapGet(tmB, "proxy-providers")
 	var retired []string
 	if ppNow != nil && ppNow.Kind == yaml.MappingNode {
@@ -262,8 +264,9 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 	}
 	if len(retired) > 0 {
 		r.Adjustments = append(r.Adjustments, fmt.Sprintf("removed placeholder subscription %v (real subscription is in place)", retired))
-		// 清理所有对已退场 provider 的引用:组的 use 列表 + 顶层锚点定义(pr/prd/use)
-		// (merge key 的 use 在锚点定义里,不在组的直接 Content 中)
+		// Clean every reference to the retired providers: the groups' use lists and the
+		// top-level anchor definitions (pr/prd/use) — a merge key's use lives in the
+		// anchor definition, not in the group's direct Content.
 		cleanupRefs := func(m *yaml.Node) {
 			if m == nil || m.Kind != yaml.MappingNode {
 				return
@@ -287,20 +290,20 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 			}
 			useNode.Content = keep
 		}
-		// 清理组(直接 use 列表)
+		// clean the groups (direct use lists)
 		gl := mapGet(tmB, "proxy-groups")
 		if gl != nil && gl.Kind == yaml.SequenceNode {
 			for _, g := range gl.Content {
 				cleanupRefs(g)
 			}
 		}
-		// 清理顶层锚点定义(pr/prd/use 内的 use 列表)
+		// clean the top-level anchor definitions (the use lists inside pr/prd/use)
 		for _, anchor := range []string{"pr", "prd", "use"} {
 			cleanupRefs(mapGet(tmB, anchor))
 		}
 	}
 
-	// 10) 进程分流
+	// 10) process-based routing
 	hasProcess := false
 	if rules := mapGet(tmB, "rules"); rules != nil && rules.Kind == yaml.SequenceNode {
 		for _, rule := range rules.Content {
@@ -318,7 +321,8 @@ func (e *Editor) MergePersonal(src *Editor, opts MergeOpts) (*MergeReport, error
 	return r, nil
 }
 
-// mergeGroupNodes 字段级合并同名组:个人字段覆盖/新增,proxies/use 取并集。
+// mergeGroupNodes merges same-name groups at field level: personal fields override/add,
+// proxies/use become a union.
 func mergeGroupNodes(base, personal *yaml.Node) {
 	if base == nil || personal == nil || base.Kind != yaml.MappingNode || personal.Kind != yaml.MappingNode {
 		return
@@ -333,7 +337,8 @@ func mergeGroupNodes(base, personal *yaml.Node) {
 				base.Content = append(base.Content, personal.Content[i], deepCopy(val))
 				continue
 			}
-			// 并集:个人在前(优先),基底原有追加在后,去重
+			// union: personal first (higher priority), the base's original entries
+			// appended after, deduplicated
 			added := map[string]bool{}
 			var newList []*yaml.Node
 			for _, pv := range val.Content {
@@ -355,7 +360,7 @@ func mergeGroupNodes(base, personal *yaml.Node) {
 	}
 }
 
-// WireAfterMerge 融合后接线。
+// WireAfterMerge wires references after the merge.
 func (e *Editor) WireAfterMerge(baseProviders, personalProxies []string, opts MergeOpts) (wired int) {
 	if !opts.NoWire {
 		for _, pn := range baseProviders {
@@ -382,7 +387,7 @@ func (e *Editor) WireAfterMerge(baseProviders, personalProxies []string, opts Me
 	return
 }
 
-// providerReferenced 组的 use 列表里是否已引用该 provider。
+// providerReferenced reports whether any group's use list already references the provider.
 func (e *Editor) providerReferenced(name string) bool {
 	gl := mapGet(e.topMap(), "proxy-groups")
 	if gl == nil || gl.Kind != yaml.SequenceNode {
@@ -400,7 +405,7 @@ func (e *Editor) providerReferenced(name string) bool {
 	return false
 }
 
-// deepCopy 深拷贝 yaml 节点。
+// deepCopy deep-copies a yaml node.
 func deepCopy(n *yaml.Node) *yaml.Node {
 	if n == nil {
 		return nil
