@@ -70,7 +70,7 @@ func runMergeConfBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 	}
 	rep.BackupPath = bakPath
 
-	tmpConf := filepath.Join(os.TempDir(), fmt.Sprintf("panixy-merge-%d.yaml", time.Now().UnixNano()))
+	tmpConf := filepath.Join(os.TempDir(), fmt.Sprintf("%s-merge-%d.yaml", constants.ProgName, time.Now().UnixNano()))
 	defer os.Remove(tmpConf)
 	os.WriteFile(tmpConf, []byte(mustRender(base)), 0o644)
 	if out, err := mihomoTest(p, tmpConf); err != nil {

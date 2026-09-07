@@ -103,8 +103,7 @@ clean it up manually first, then retry:
 	}
 	secret, _ := cmd.Flags().GetString("secret")
 
-	snap := snapshot(p)
-	defer func() { /* each failure path rolls back explicitly */ _ = snap }()
+	snap := snapshot(p) // consumed by the explicit rollback below on every failure path
 
 	logx.Step("[1/5] place geo and ad rules (offline preloaded)")
 	placeGeoAndRules(p, assets)

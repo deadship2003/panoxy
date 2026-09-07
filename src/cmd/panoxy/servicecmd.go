@@ -105,13 +105,13 @@ Scope: only --system is supported (a transparent gateway needs root for nftables
 Exit codes: 0 success · 1 invalid arguments · 2 insufficient privileges ·
 3 service operation failed (not installed / systemctl failure / health timeout) ·
 4 unsupported scope.`,
-		Example: `  sudo panixy service install              # write/refresh units (no start, no enable)
-  sudo panixy service start                # start now (survives nothing; boot state untouched)
-  sudo panixy service enable               # register auto-start on boot (+ arm upgrade timer)
-  sudo panixy service status --json        # fixed-field machine-readable status
-  sudo panixy service disable              # unregister auto-start (a running service keeps running)
-  sudo panixy service stop                 # stop now + clear firewall (boot state untouched)
-  sudo panixy service uninstall            # remove units (data and config kept)`,
+		Example: `  sudo panoxy service install              # write/refresh units (no start, no enable)
+  sudo panoxy service start                # start now (survives nothing; boot state untouched)
+  sudo panoxy service enable               # register auto-start on boot (+ arm upgrade timer)
+  sudo panoxy service status --json        # fixed-field machine-readable status
+  sudo panoxy service disable              # unregister auto-start (a running service keeps running)
+  sudo panoxy service stop                 # stop now + clear firewall (boot state untouched)
+  sudo panoxy service uninstall            # remove units (data and config kept)`,
 	}
 	c.PersistentFlags().Bool("system", false, "operate on the system-scope service (default; the only supported scope)")
 	c.PersistentFlags().Bool("user", false, "operate on the user-scope service (unsupported: transparent proxying needs root)")

@@ -40,6 +40,17 @@ func runInitBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 	total := 8
 	stepf := func(i int, f string, a ...any) { logx.Step("[%d/%d] %s", i, total, fmt.Sprintf(f, a...)) }
 
+	// The subscription bootstrap proxy (started lazily during downloads) must die on EVERY
+	// exit path — success or failure. A leaked temp kernel keeps holding ports and blocks a
+	// later retry (LIF-001 single-instance red line). bootProxyStop is a no-op when the
+	// proxy was never started.
+	defer func() {
+		if bp := bootProxyAddr(); bp != "" {
+			bootProxyStop()
+			logx.Info("bootstrap proxy cleaned up")
+		}
+	}()
+
 	name, _ := cmd.Flags().GetString("name")
 	file, _ := cmd.Flags().GetString("file")
 	mode, _ := cmd.Flags().GetString("proxy-mode")
@@ -107,7 +118,7 @@ func runInitBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 		return bootProxyAddr()
 	}
 
-	tmp, _ := os.MkdirTemp("", "panixy-init-")
+	tmp, _ := os.MkdirTemp("", constants.ProgName+"-init-")
 	defer os.RemoveAll(tmp)
 
 	stepf(4, "download geo data and ad rules")
@@ -191,10 +202,6 @@ func runInitBody(p paths.Paths, cmd *cobra.Command, args []string) error {
 	setCmd.Flags().StringSlice("group", nil, "")
 	if err := runSubImport(setCmd, []string{url}); err != nil {
 		return fmt.Errorf("subscription import failed: %v (assets and service are ready, you can retry later with sudo %s sub import)", err, constants.ProgName)
-	}
-	if bp := bootProxyAddr(); bp != "" {
-		bootProxyStop()
-		logx.Info("bootstrap proxy cleaned up")
 	}
 	logx.Info("init complete: %s status to check health; web UI http://<host-IP>:%d/ui/ (secret %s)", constants.ProgName, constants.ApiPortDef, secret)
 	return nil
@@ -294,7 +301,7 @@ func bootProxyFromSub(body []byte) {
 		return
 	}
 	port := freePortStr()
-	dir, _ := os.MkdirTemp("", "panixy-boot-")
+	dir, _ := os.MkdirTemp("", constants.ProgName+"-boot-")
 	conf := fmt.Sprintf(`mixed-port: %s
 mode: rule
 log-level: warning
@@ -317,9 +324,12 @@ rules:
 	}
 	os.WriteFile(filepath.Join(dir, "boot.sub.yaml"), bootBody, 0o644)
 	// Boot the embedded kernel via `panoxy run`; the temp dir is the data home, the temp config the source.
+	// INVOCATION_ID marks this as a deliberately spawned kernel (different ports, temp data
+	// home) so the run command's single-instance guard does not treat it as a stray duplicate.
 	c := exec.Command(bootBin, "run")
 	c.Dir = dir
 	c.Env = append(os.Environ(),
+		"INVOCATION_ID=boot",
 		constants.EnvPrefix()+"_ROOT="+dir,
 		constants.EnvPrefix()+"_CONF="+filepath.Join(dir, "boot.yaml"))
 	if err := c.Start(); err != nil {

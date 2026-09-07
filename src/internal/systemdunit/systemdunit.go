@@ -159,14 +159,14 @@ func Active() string {
 
 // StatusInfo carries the LIF-001 fixed status fields, sourced from the init system.
 type StatusInfo struct {
-	Installed      bool
-	Enabled        bool
-	Running        bool
-	PID            int
-	UptimeSeconds  int64
-	LastExitCode   int
-	LastError      string
-	RestartCount   int
+	Installed     bool
+	Enabled       bool
+	Running       bool
+	PID           int
+	UptimeSeconds int64
+	LastExitCode  int
+	LastError     string
+	RestartCount  int
 }
 
 // Status collects the service status snapshot (system scope, systemd).
@@ -224,6 +224,29 @@ func ParseUptime(ts string) int64 {
 		return 0
 	}
 	return int64(time.Since(t).Seconds())
+}
+
+// UnitEnv extracts the Environment= assignments from the installed main unit — the
+// environment-alignment source for the LIF-002 foreground debug run. A missing unit
+// yields nil (the caller then runs with the current environment). The unit sets no
+// WorkingDirectory (ExecStart paths are absolute), so env is all that needs restoring.
+func UnitEnv(p paths.Paths) map[string]string {
+	b, err := os.ReadFile(filepath.Join(p.UnitDir, unitMain))
+	if err != nil {
+		return nil
+	}
+	m := map[string]string{}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if !strings.HasPrefix(l, "Environment=") {
+			continue
+		}
+		v := strings.Trim(strings.TrimPrefix(l, "Environment="), `"`)
+		if i := strings.IndexByte(v, '='); i > 0 {
+			m[v[:i]] = v[i+1:]
+		}
+	}
+	return m
 }
 
 // DetectLegacy detects bash-version deployment leftovers: an old unit containing

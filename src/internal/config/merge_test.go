@@ -223,8 +223,8 @@ func geoFallback(t *testing.T) string {
 		}
 	}
 	if h, _ := os.UserHomeDir(); h != "" {
-		if _, err := os.Stat(h + "/panixy-e2e/GeoSite.dat"); err == nil {
-			return h + "/panixy-e2e"
+		if _, err := os.Stat(h + "/panoxy-e2e/GeoSite.dat"); err == nil {
+			return h + "/panoxy-e2e"
 		}
 	}
 	t.Skip("本机无 geodata(GeoSite.dat),跳过进程内 -t 实测")

@@ -30,7 +30,7 @@ Single binary · zero dependencies · transactional deployment · automatic roll
 - 🧩 **Config merge** — `merge-conf` does field-level merge of same-named groups (union of proxies/use); base groups are preserved, never deleted
 - ⬆️ **Parameterized upgrade** — `--check`/`--ui-version` (web UI); dry-run validation, automatic rollback on failure
 - 📖 **Complete documentation** — every command's `-h/-?/--help` includes examples; `man panoxy` is generated from the same source as `--help`
-- 🔍 **Debug-friendly** — `--verbose` for step-by-step detail; `--debug` for zero-obfuscation of external command/API I/O
+- 🔍 **Debug-friendly** — `--verbose` for step-by-step detail; `--trace` for zero-obfuscation of external command/API I/O; `sudo panoxy --debug` boots the kernel in the foreground with the unit's environment
 
 ## 🚀 Quick start
 
@@ -381,7 +381,7 @@ git tag V0.0.1 && git push origin V0.0.1
 
 ## 📋 Command reference
 
-Global flags (every command): `--root <dir>` custom install dir · `--verbose` step-by-step detail · `--debug` full transparency
+Global flags (every command): `--root <dir>` custom install dir · `--verbose` step-by-step detail · `--trace` full transparency. Standalone: `sudo panoxy --debug` = foreground kernel run with the unit's environment (LIF-002).
 
 | Command (parameters) | Effect |
 |---|---|

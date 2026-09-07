@@ -257,7 +257,7 @@ func geoSrcOr(t *testing.T) string {
 	}
 	for _, c := range []string{
 		filepath.Join("/opt", constants.ProgName),
-		"/opt/panoxy", // legacy leftover name
+		"/opt/panixy", // legacy leftover name from old deployments
 		homeDir() + "/panoxy-e2e",
 	} {
 		if _, err := os.Stat(filepath.Join(c, "GeoSite.dat")); err == nil {

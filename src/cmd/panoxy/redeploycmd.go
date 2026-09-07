@@ -43,8 +43,8 @@ package — it copies the currently running binary (the one you just built) to t
 
 Flow: precheck (installed?) → copy binary → refresh man/units/sysctl/default-config → validate
 → restart → explicitly re-mount the firewall → health verification.`,
-		Example: `  sudo panixy redeploy              # refresh the installed CLI in place (keep config/data)
-  sudo panixy redeploy --dry-run    # dry-run: report install state and the files to refresh`,
+		Example: `  sudo panoxy redeploy              # refresh the installed CLI in place (keep config/data)
+  sudo panoxy redeploy --dry-run    # dry-run: report install state and the files to refresh`,
 		RunE: runRedeploy,
 	}
 	addDryRunFlag(c, "dry-run mode: report install state and the files to refresh, do not execute")

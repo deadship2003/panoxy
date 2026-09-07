@@ -266,7 +266,7 @@ package_cmd() {
   # local assets source (offline packaging): copied first when present, downloaded only when missing
   local SRC="${ASSETS_SRC:-/opt/$PROG}"
 
-  BOOT_DIRF="$(mktemp -d)/panoxy-boot-proxy.dir"; : > "$BOOT_DIRF" 2>/dev/null || BOOT_DIRF=/tmp/panoxy-boot-proxy.$$.dir
+  BOOT_DIRF="$(mktemp -d)/${PROG}-boot-proxy.dir"; : > "$BOOT_DIRF" 2>/dev/null || BOOT_DIRF="/tmp/${PROG}-boot-proxy.$$.dir"
 
   echo "== [1/5] build (CLI, --arch $ARCH) via make =="
   build_cmd --arch "$ARCH" --ver "$VER" --prog "$PROG"

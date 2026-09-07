@@ -36,12 +36,12 @@ func TestMain(m *testing.M) {
 		fmt.Println("SKIP: no go toolchain")
 		os.Exit(0)
 	}
-	// geo source resolution: GEO_SRC > /opt/<ProgName> > /opt/panoxy > offline-package assets
-	// (keeps e2e working after the machine's /opt has been cleaned)
+	// geo source resolution: GEO_SRC > /opt/<ProgName> > /opt/panixy (legacy installs) >
+	// ~/panoxy-e2e > offline-package assets (keeps e2e working after /opt was cleaned)
 	if os.Getenv("GEO_SRC") == "" {
 		for _, c := range []string{
 			filepath.Join("/opt", constants.ProgName),
-			"/opt/panoxy",
+			"/opt/panixy", // legacy leftover name from old deployments
 			homeDir() + "/panoxy-e2e",
 			constants.ProgName + "-V0.0.1-local-amd64/assets/geo",
 		} {
@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 			}
 		}
 	}
-	dir, err := os.MkdirTemp("", "panoxy-e2e-bin-")
+	dir, err := os.MkdirTemp("", constants.ProgName+"-e2e-bin-")
 	if err != nil {
 		os.Exit(1)
 	}
@@ -107,7 +107,9 @@ func newEnv(t *testing.T) *env {
 PIDF=%s
 PROG=%s
 start_mh() {
-  nohup "$%s_CLI" run >> "$%s_ROOT/run.log" 2>&1 9>&- &
+  # The shim plays systemd, so it sets what systemd sets: INVOCATION_ID marks the kernel
+  # as deliberately spawned (the run command's single-instance guard skips its probe).
+  INVOCATION_ID=e2e nohup "$%s_CLI" run >> "$%s_ROOT/run.log" 2>&1 9>&- &
   echo $! >> "$PIDF"
 }
 kill_mh() { while read p; do kill "$p" 2>/dev/null; done < "$PIDF" 2>/dev/null; : > "$PIDF"; }

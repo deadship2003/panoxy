@@ -52,8 +52,8 @@ func geodataSrc(t *testing.T) string {
 		}
 	}
 	if h, err := os.UserHomeDir(); err == nil {
-		if _, err := os.Stat(filepath.Join(h, "panixy-e2e", "GeoSite.dat")); err == nil {
-			return filepath.Join(h, "panixy-e2e")
+		if _, err := os.Stat(filepath.Join(h, "panoxy-e2e", "GeoSite.dat")); err == nil {
+			return filepath.Join(h, "panoxy-e2e")
 		}
 	}
 	t.Skip("本机无 geodata(GeoSite.dat),跳过进程内 -t 实测")

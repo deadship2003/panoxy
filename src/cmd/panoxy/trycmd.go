@@ -24,7 +24,7 @@ import (
 func runTry(cmd *cobra.Command, args []string) error {
 	dir, _ := cmd.Flags().GetString("dir")
 	if dir == "" {
-		dir = filepath.Join(os.TempDir(), fmt.Sprintf("panixy-try-%d", time.Now().Unix()))
+		dir = filepath.Join(os.TempDir(), fmt.Sprintf("%s-try-%d", constants.ProgName, time.Now().Unix()))
 	}
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
@@ -48,7 +48,9 @@ func runTry(cmd *cobra.Command, args []string) error {
 PIDF=%s
 start_mh() {
   awk '/^tun:/{s=1;next} /^routing-mark:/{next} s && /^[^ \t#]/{s=0} !s{print}' "${{PREFIX}}_CONF" > "${{PREFIX}}_CONF.notun"
-  {{PREFIX}}_CONF="${{PREFIX}}_CONF.notun" "${{PREFIX}}_CLI" run >> "${{PREFIX}}_ROOT/run.log" 2>&1 < /dev/null &
+  # INVOCATION_ID marks the kernel as deliberately spawned by this shim (which plays
+  # systemd), skipping the run command's single-instance probe.
+  INVOCATION_ID=1 {{PREFIX}}_CONF="${{PREFIX}}_CONF.notun" "${{PREFIX}}_CLI" run >> "${{PREFIX}}_ROOT/run.log" 2>&1 < /dev/null &
   echo $! > "$PIDF"
 }
 kill_mh() { while read p; do kill "$p" 2>/dev/null; done < "$PIDF" 2>/dev/null; : > "$PIDF"; }

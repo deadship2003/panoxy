@@ -57,38 +57,42 @@ func cleanExit(code int) {
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "panixy",
+		Use:   "panoxy",
 		Short: "mihomo-based transparent proxy gateway deploy/management tool",
-		Long: `panixy — Linux transparent proxy gateway deploy/management tool built on mihomo (TUN/TPROXY)
+		Long: `panoxy — Linux transparent proxy gateway deploy/management tool built on mihomo (TUN/TPROXY)
 
 The data plane (node/policy-group selection) lives in the Web UI; the transport plane
 (tun/tproxy mode, firewall) lives in this CLI.
 
 Getting started:
-  panixy init --dry-run                  # dry-run (no root needed)
-  panixy try 'SUBSCRIPTION_URL'          # sandbox full install test (no root needed)
-  sudo panixy init 'SUBSCRIPTION_URL'    # initialize and deploy directly
-  sudo ./panixy deploy 'SUBSCRIPTION_URL' # deploy from an offline package
+  panoxy init --dry-run                  # dry-run (no root needed)
+  panoxy try 'SUBSCRIPTION_URL'          # sandbox full install test (no root needed)
+  sudo panoxy init 'SUBSCRIPTION_URL'    # initialize and deploy directly
+  sudo ./panoxy deploy 'SUBSCRIPTION_URL' # deploy from an offline package
 
 Subscription / config:
-  sudo panixy sub import 'SUBSCRIPTION_URL' # import a subscription (paste mode, no quoting)
-  sudo panixy merge-conf ~/my.yaml       # merge personal config (--dry-run to preview)
-  panixy config                           # print default config template (no root)
+  sudo panoxy sub import 'SUBSCRIPTION_URL' # import a subscription (paste mode, no quoting)
+  sudo panoxy merge-conf ~/my.yaml       # merge personal config (--dry-run to preview)
+  panoxy config                           # print default config template (no root)
 
 Daily use:
-  panixy status                          # health overview (service/firewall/subscription/egress)
-  sudo panixy start                      # start the service now (transient; boot state untouched)
-  sudo panixy stop                       # stop the service + clear firewall (boot state untouched)
-  sudo panixy restart                    # restart the service (self-heals firewall)
-  sudo panixy service enable             # register auto-start on boot (start/stop never change it)
-  sudo panixy mode tproxy                # switch to TPROXY (nftables tproxy; needs kernel support)
-  sudo panixy upgrade --check            # show what can be upgraded
+  panoxy status                          # health overview (service/firewall/subscription/egress)
+  sudo panoxy start                      # start the service now (transient; boot state untouched)
+  sudo panoxy stop                       # stop the service + clear firewall (boot state untouched)
+  sudo panoxy restart                    # restart the service (self-heals firewall)
+  sudo panoxy service enable             # register auto-start on boot (start/stop never change it)
+  sudo panoxy mode tproxy                # switch to TPROXY (nftables tproxy; needs kernel support)
+  sudo panoxy upgrade --check            # show what can be upgraded
 
 Operations:
-  sudo panixy redeploy                   # refresh the CLI in place (keep config/data)
-  sudo panixy uninstall                  # uninstall (keep data and config)
+  sudo panoxy redeploy                   # refresh the CLI in place (keep config/data)
+  sudo panoxy uninstall                  # uninstall (keep data and config)
 
-Commands (all accept --root/--verbose/--debug):
+Debugging:
+  sudo panoxy --debug                    # foreground kernel run with the unit's environment (Ctrl-C to stop)
+  panoxy <command> --trace               # zero-obfuscation passthrough: external commands, API I/O, config diff
+
+Commands (all accept --root/--verbose/--trace):
   init [URL]       --name --file --proxy-mode --secret --mirror --dry-run    bare-metal network install + sub import
   deploy [URL]     --name --file --proxy-mode --secret --dry-run                        offline-package install
   redeploy         --dry-run                                                            refresh CLI/units in place (config kept)
@@ -105,13 +109,23 @@ Commands (all accept --root/--verbose/--debug):
   check [yaml] | apply-conf <yaml>                                                    validate / apply a config
   uninstall | units | log [n] | man [cmd] --raw | upstream | fw <apply|clean>           ops, info & advanced
 
-Details: panixy man, or man panixy-<command> (after deployment)`,
+Details: panoxy man, or man panoxy-<command> (after deployment)`,
 		Version: version,
 	}
-	root.PersistentFlags().String("root", "", "install directory (default /opt/panixy; the data home can be relocated wholesale; /etc/clash.yaml stays the system-level config)")
+	root.PersistentFlags().String("root", "", "install directory (default /opt/panoxy; the data home can be relocated wholesale; /etc/clash.yaml stays the system-level config)")
 	root.PersistentFlags().Bool("verbose", false, "step-by-step detail: each transaction step, files written, rules applied")
-	root.PersistentFlags().Bool("debug", false, "full passthrough: echo external commands verbatim, mihomo API request/response, config diff")
-	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+	root.PersistentFlags().Bool("trace", false, "full passthrough: echo external commands verbatim, mihomo API request/response, config diff")
+	// --debug is the LIF-002 foreground kernel run — a standalone invocation (`panoxy --debug`),
+	// never a subcommand modifier; subcommands reject it (see PersistentPreRunE).
+	root.PersistentFlags().Bool("debug", false, "boot the kernel in the foreground with the unit's environment (standalone; for verbose passthrough use --trace)")
+	root.Flags().Bool("system", false, "explicit system scope for --debug (the only supported scope)")
+	root.Flags().Bool("user", false, "user scope for --debug (unsupported: transparent proxying needs root)")
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd != root {
+			if d, _ := cmd.Flags().GetBool("debug"); d {
+				return fmt.Errorf("--debug boots the kernel in the foreground and takes no subcommands; for verbose passthrough use --trace")
+			}
+		}
 		if r, _ := cmd.Flags().GetString("root"); r != "" {
 			if !filepath.IsAbs(r) {
 				logx.Error("--root requires an absolute path: %s", r)
@@ -119,11 +133,20 @@ Details: panixy man, or man panixy-<command> (after deployment)`,
 			}
 			os.Setenv(constants.EnvPrefix()+"_ROOT", r) // all paths.Get() take effect immediately; service units also inject this
 		}
-		if d, _ := cmd.Flags().GetBool("debug"); d {
+		if t, _ := cmd.Flags().GetBool("trace"); t {
 			logx.SetLevel(logx.LevelDebug)
 		} else if v, _ := cmd.Flags().GetBool("verbose"); v {
 			logx.SetLevel(logx.LevelVerbose)
 		}
+		return nil
+	}
+	// Bare invocation: --debug boots the foreground kernel run (LIF-002); anything else
+	// falls through to the normal help output.
+	root.RunE = func(cmd *cobra.Command, args []string) error {
+		if d, _ := cmd.Flags().GetBool("debug"); d {
+			return runDebugForeground(cmd, args)
+		}
+		return cmd.Help()
 	}
 	root.AddCommand(
 		cmdInit(), cmdDeploy(), cmdRedeploy(), cmdSub(),
@@ -132,15 +155,15 @@ Details: panixy man, or man panixy-<command> (after deployment)`,
 		cmdUninstall(), cmdUnits(), cmdLog(), cmdCheck(), cmdApplyConf(), cmdConfig(),
 		cmdFw(), cmdMan(), cmdUpstream(),
 	)
-	rebrand(root) // replace hard-coded "panixy"/"/etc/clash.yaml" with the compile-time injected ProgName/DefConfPath
+	rebrand(root) // replace hard-coded "panoxy"/"/etc/clash.yaml" with the compile-time injected ProgName/DefConfPath
 	return root
 }
 
-// rebrand replaces hard-coded "panixy" and "/etc/clash.yaml" in the command tree with the compile-time
+// rebrand replaces hard-coded "panoxy" and "/etc/clash.yaml" in the command tree with the compile-time
 // injected ProgName / DefConfPath, so --help/man examples and flag descriptions match the renamed program.
 func rebrand(cmd *cobra.Command) {
 	rep := func(s string) string {
-		s = strings.ReplaceAll(s, "panixy", constants.ProgName)
+		s = strings.ReplaceAll(s, "panoxy", constants.ProgName)
 		s = strings.ReplaceAll(s, "/etc/clash.yaml", constants.DefConfPath)
 		return s
 	}
@@ -189,16 +212,16 @@ real system (no /opt or /etc writes, no service install, no firewall changes).
 Only two differences from a real deploy (both due to non-root limits, absent with sudo):
   - the tun section is stripped when booting the kernel (TUN device needs CAP_NET_ADMIN)
   - routing-mark is stripped (SO_MARK needs privileges); firewall rules are not applied
-After it passes, deploy for real with: sudo panixy init 'SUBSCRIPTION_URL'`,
-		Example: `  panixy try 'https://example.com/sub?token=x'   # full-flow test
-  panixy try --dir ~/panixy-sandbox             # sandbox dir (default: temp dir)
-  panixy try                                    # paste a subscription on Enter`,
+After it passes, deploy for real with: sudo panoxy init 'SUBSCRIPTION_URL'`,
+		Example: `  panoxy try 'https://example.com/sub?token=x'   # full-flow test
+  panoxy try --dir ~/panoxy-sandbox             # sandbox dir (default: temp dir)
+  panoxy try                                    # paste a subscription on Enter`,
 		RunE: runTry,
 	}
 	addSubSourceFlags(c)
 	addDeployFlags(c)
 	addDownloadFlags(c)
-	c.Flags().String("dir", "", "sandbox directory (default /tmp/panixy-try-<timestamp>)")
+	c.Flags().String("dir", "", "sandbox directory (default /tmp/panoxy-try-<timestamp>)")
 	return c
 }
 
@@ -209,7 +232,7 @@ func cmdMergeConf() *cobra.Command {
 		Long: `Merge a personal clash.yaml (any filename) onto the default template (config.default.yaml) —
 same-name groups are merged rather than replaced.
 
-Base:      /opt/panixy/config.default.yaml (clean template from init/deploy, with SUB_URL_PLACEHOLDER)
+Base:      /opt/panoxy/config.default.yaml (clean template from init/deploy, with SUB_URL_PLACEHOLDER)
 Groups:    same name -> field-level merge (proxies/use union, scalars overridden by personal)
            new personal group -> appended at the end
            base groups (region/app groups) -> kept (references stay valid)
@@ -220,18 +243,18 @@ Keep (base): tun mode section/routing-mark/dns.listen(secret)/geo/ntp/sniffer
 Auto:      PROCESS- rules -> find-process-mode=strict; placeholder sub retires
 
 Backup & rollback:
-  auto-backup before merge -> /etc/clash.yaml.panixy-premerge
+  auto-backup before merge -> /etc/clash.yaml.panoxy-premerge
   any step failing restores automatically; after success use --rollback to revert manually`,
-		Example: `  panixy merge-conf --dry-run ~/my-clash.yaml    # dry-run (no write, no backup)
-  sudo panixy merge-conf ~/my-clash.yaml         # merge and apply
-  sudo panixy merge-conf --rollback              # revert to pre-merge
-  sudo panixy merge-conf --dns mine ~/my-clash.yaml`,
+		Example: `  panoxy merge-conf --dry-run ~/my-clash.yaml    # dry-run (no write, no backup)
+  sudo panoxy merge-conf ~/my-clash.yaml         # merge and apply
+  sudo panoxy merge-conf --rollback              # revert to pre-merge
+  sudo panoxy merge-conf --dns mine ~/my-clash.yaml`,
 		RunE: runMergeConf,
 	}
 	addDryRunFlag(c, "dry-run: print the decision report and merged result preview only; no write, no backup")
 	c.Flags().String("dns", "keep", "DNS section policy: keep (base) | mine (personal, listen forced to 1053)")
 	c.Flags().Bool("no-wire", false, "do not auto-wire base subscriptions into groups")
-	c.Flags().Bool("rollback", false, "restore from the .panixy-premerge backup")
+	c.Flags().Bool("rollback", false, "restore from the .panoxy-premerge backup")
 	return c
 }
 
@@ -241,18 +264,18 @@ func cmdInit() *cobra.Command {
 		Short: "single-binary init (no package): download assets + deploy + import sub, with progress; --dry-run",
 		Long: `Single-binary init without a package or offline assets — deploy directly on any bare machine.
 
-Three-tier download strategy (each step shows a progress bar; --verbose for steps, --debug for full detail):
+Three-tier download strategy (each step shows a progress bar; --verbose for steps, --trace for full detail):
   direct (hard-fail after 15s) > subscription-bootstrap proxy (start a local proxy via a
-  subscription node; needs the local panixy CLI) > gh mirror (--mirror, third-party source; for
+  subscription node; needs the local panoxy CLI) > gh mirror (--mirror, third-party source; for
   friends prefer the offline package deploy)
 
 Eight steps: pre-check -> fetch subscription -> network probe -> geo/rules -> UI -> place assets
 + render config -> deploy service (firewall/health) -> import subscription (node count > 0).`,
-		Example: `  sudo panixy init 'https://example.com/sub?token=x&sid=y'
-  sudo panixy init --name Nano                            # paste a subscription on Enter
-  sudo panixy init --file sub.yaml URL                    # import subscription offline
-  sudo panixy init --mirror https://ghfast.top/ URL       # when direct is unreachable
-  panixy init --dry-run                                   # dry-run (no root needed)`,
+		Example: `  sudo panoxy init 'https://example.com/sub?token=x&sid=y'
+  sudo panoxy init --name Nano                            # paste a subscription on Enter
+  sudo panoxy init --file sub.yaml URL                    # import subscription offline
+  sudo panoxy init --mirror https://ghfast.top/ URL       # when direct is unreachable
+  panoxy init --dry-run                                   # dry-run (no root needed)`,
 		RunE: runInit,
 	}
 	addSubSourceFlags(c)
@@ -273,9 +296,9 @@ template) -> install CLI and man pages -> write systemd units -> enable ip_forwa
 the service (with firewall). Any step failing rolls back everything. If legacy bash-deploy
 leftovers are detected (units with resolvectl / config with dns-hijack), it aborts and prints
 manual cleanup guidance.`,
-		Example: `  sudo ./panixy deploy 'https://example.com/sub?token=x&sid=y'   # deploy and import subscription
-  sudo ./panixy deploy --name Nano                              # deploy; paste sub on Enter
-  sudo ./panixy deploy --proxy-mode tproxy                      # deploy in TPROXY mode`,
+		Example: `  sudo ./panoxy deploy 'https://example.com/sub?token=x&sid=y'   # deploy and import subscription
+  sudo ./panoxy deploy --name Nano                              # deploy; paste sub on Enter
+  sudo ./panoxy deploy --proxy-mode tproxy                      # deploy in TPROXY mode`,
 		RunE: runDeploy,
 	}
 	addSubSourceFlags(c)
@@ -293,10 +316,10 @@ func cmdSub() *cobra.Command {
 Subscription import uses incremental yaml editing to write proxy-providers[NAME] (reusing anchor
 <<: *p), and pre-populates cache, restarts the kernel, and verifies node count > 0; any step
 failing rolls back automatically.`,
-		Example: `  sudo panixy sub import 'https://example.com/sub?token=x'   # import (paste mode, no quoting)
-  sudo panixy sub import --name airport2 'https://example.com/sub2'
-  sudo panixy sub del --name airport2
-  panixy sub list`,
+		Example: `  sudo panoxy sub import 'https://example.com/sub?token=x'   # import (paste mode, no quoting)
+  sudo panoxy sub import --name airport2 'https://example.com/sub2'
+  sudo panoxy sub del --name airport2
+  panoxy sub list`,
 	}
 	c.AddCommand(cmdSubImport(), cmdSubDel(), cmdSubList())
 	return c
@@ -316,7 +339,7 @@ provider cache -> restart (hot-reload does not re-fetch provider content) -> que
 that provider's node count, and roll back automatically if it is 0.
 
 Prerequisite: the config has an &p anchor (the base template ships it).`,
-		Example: "  sudo panixy sub import --name airport2 'https://example.com/sub2'\n  sudo panixy sub import   # paste mode",
+		Example: "  sudo panoxy sub import --name airport2 'https://example.com/sub2'\n  sudo panoxy sub import   # paste mode",
 		RunE:    runSubImport,
 	}
 	addSubSourceFlags(c)
@@ -335,7 +358,7 @@ health check; any step failing rolls back automatically. Note: deleting the only
 leaves a group without use, which -t rejects (import a new subscription first).
 
 The provider name is the --name from sub import (default SUB); list existing names with sub list.`,
-		Example: "  sudo panixy sub del --name airport2",
+		Example: "  sudo panoxy sub del --name airport2",
 		RunE:    runSubDel,
 	}
 	c.Flags().String("name", "", "provider name to delete (required)")
@@ -350,7 +373,7 @@ func cmdSubList() *cobra.Command {
 		Long: `Read every proxy-provider from the config and query each one via the mihomo API.
 
 Status: ✅ ok / ⚠️ fetch failed / ⚠️ parse failed / ⚠️ zero nodes. --json emits machine-readable output.`,
-		Example: "  panixy sub list            # table\n  panixy sub list --json     # machine-readable",
+		Example: "  panoxy sub list            # table\n  panoxy sub list --json     # machine-readable",
 		RunE:    runSubList,
 	}
 	c.Flags().Bool("json", false, "output as JSON")
@@ -368,10 +391,10 @@ it also notes that browser DoH cannot be intercepted by the kernel.
   --detail  append details: current proxy mode (tun/tproxy), TUN stack risk hints, route/cache details
   -q        quiet, exit code only: 0 healthy 1 degraded (zero nodes or proxy egress down) 2 fault (service/API unavailable)
   --json    machine-readable single line`,
-		Example: `  panixy status              # overview
-  panixy status --detail      # append details
-  panixy status -q            # exit code only (for monitoring scripts)
-  panixy status --json        # machine-readable`,
+		Example: `  panoxy status              # overview
+  panoxy status --detail      # append details
+  panoxy status -q            # exit code only (for monitoring scripts)
+  panoxy status --json        # machine-readable`,
 		RunE: runStatus,
 	}
 	c.Flags().Bool("detail", false, "append details")
@@ -413,18 +436,18 @@ TPROXY pre-checks (nftables):
 Verify after switching:
   ip rule show | grep fwmark          # should have fwmark 0x1 lookup 100
   ip route show table 100             # should have local default dev lo
-  sudo nft list table inet panixy | grep tproxy
+  sudo nft list table inet panoxy | grep tproxy
 
 Transparent gateway network setup (LAN devices):
-  have the router DHCP hand out gateway = panixy machine's LAN IP and a public DNS
-  (53 will be hijacked); or point a single device's gateway at the panixy machine manually.
+  have the router DHCP hand out gateway = panoxy machine's LAN IP and a public DNS
+  (53 will be hijacked); or point a single device's gateway at the panoxy machine manually.
 
 Note: mode cannot be switched from the Web UI — firewall rules and config must change in one
 transaction; the UI only handles the data plane (nodes/groups). With no argument it shows the
 current mode.`,
-		Example: `  panixy mode              # view current mode
-  sudo panixy mode tproxy  # switch to TPROXY (nftables tproxy; needs kernel support)
-  sudo panixy mode tun     # switch back to TUN (default)`,
+		Example: `  panoxy mode              # view current mode
+  sudo panoxy mode tproxy  # switch to TPROXY (nftables tproxy; needs kernel support)
+  sudo panoxy mode tun     # switch back to TUN (default)`,
 		RunE: func(cmd *cobra.Command, args []string) error { return runMode(cmd, args) },
 	}
 }
@@ -436,14 +459,14 @@ func cmdUpgrade() *cobra.Command {
 		Long: `Upgrade the metacubexd web UI. Only when the upgrade succeeds is .last-upgrade updated.
 
 The mihomo kernel is fused into the CLI, so there is no separate kernel to upgrade here; a new
-CLI version is shipped by compiling a new binary and running sudo panixy redeploy (or simply
+CLI version is shipped by compiling a new binary and running sudo panoxy redeploy (or simply
 copying the freshly built binary over the CLI path).
 
   upgrade (bare)             upgrade the UI to the latest (the daily-timer default)
   upgrade --ui               manually (re)upgrade the UI, even if already at the latest
   upgrade --ui-version vX    pin a UI version
   upgrade --check            show current/latest version and the action to take (no change)`,
-		Example: "  panixy upgrade --check             # show current/latest UI version\n  sudo panixy upgrade                 # upgrade the UI (daily-timer default)\n  sudo panixy upgrade --ui             # manual UI upgrade (re-applies even if latest)\n  sudo panixy upgrade --ui-version vX  # pin a UI version",
+		Example: "  panoxy upgrade --check             # show current/latest UI version\n  sudo panoxy upgrade                 # upgrade the UI (daily-timer default)\n  sudo panoxy upgrade --ui             # manual UI upgrade (re-applies even if latest)\n  sudo panoxy upgrade --ui-version vX  # pin a UI version",
 		RunE:    runUpgrade,
 	}
 	c.Flags().Bool("ui", false, "manually (re)upgrade the web UI now, even if already at the latest")
@@ -456,12 +479,12 @@ func cmdUninstall() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
 		Short: "stop the service, clean firewall and systemd units (keep /opt data and config)",
-		Long: `Stop and remove the panixy service and the scheduled upgrade task; clean up its own firewall
+		Long: `Stop and remove the panoxy service and the scheduled upgrade task; clean up its own firewall
 rules, sysctl, and man pages.
 
-Kept: the /opt/panixy data directory (geo/UI/subscription cache) and the /etc/clash.yaml
+Kept: the /opt/panoxy data directory (geo/UI/subscription cache) and the /etc/clash.yaml
 config, plus the CLI binary itself — re-running init/deploy afterwards reuses the data.`,
-		Example: "  sudo panixy uninstall",
+		Example: "  sudo panoxy uninstall",
 		RunE:    runUninstall,
 	}
 }
@@ -470,10 +493,10 @@ func cmdUnits() *cobra.Command {
 	return &cobra.Command{
 		Use:   "units",
 		Short: "print the rendered systemd unit text (offline review, no system changes)",
-		Long: `Print the full unit text of panixy.service / panixy-upgrade.service / panixy-upgrade.timer,
+		Long: `Print the full unit text of panoxy.service / panoxy-upgrade.service / panoxy-upgrade.timer,
 rendered for the current install directory (--root). Read-only, writes no files, for pre-install
 review or diffing.`,
-		Example: "  panixy units > units.txt    # export for review",
+		Example: "  panoxy units > units.txt    # export for review",
 		RunE:    runUnits,
 	}
 }
@@ -481,10 +504,10 @@ review or diffing.`,
 func cmdLog() *cobra.Command {
 	return &cobra.Command{
 		Use:   "log [lines]",
-		Short: "view panixy service logs (journalctl)",
-		Long: `Pass through journalctl to view the recent logs of panixy.service and panixy-upgrade.service.
+		Short: "view panoxy service logs (journalctl)",
+		Long: `Pass through journalctl to view the recent logs of panoxy.service and panoxy-upgrade.service.
 No argument shows the last 80 lines; a numeric argument sets the line count.`,
-		Example: "  panixy log        # last 80 lines\n  panixy log 200    # last 200 lines",
+		Example: "  panoxy log        # last 80 lines\n  panoxy log 200    # last 200 lines",
 		RunE:    runLog,
 	}
 }
@@ -498,7 +521,7 @@ changes no files, no root needed.
 
 With no argument it validates the current /etc/clash.yaml; with a path it validates that file
 (e.g. before apply-conf).`,
-		Example: "  panixy check                 # validate current config\n  panixy check ~/my-clash.yaml  # validate a specific file",
+		Example: "  panoxy check                 # validate current config\n  panoxy check ~/my-clash.yaml  # validate a specific file",
 		RunE:    runCheck,
 	}
 }
@@ -513,7 +536,7 @@ on failure. Auto-backup before applying; success clears the backup.
 
 Note: kernel hot-reload rebuilds providers but does not re-fetch their content, so subscription
 changes (add/remove/URL) need a restart to take effect.`,
-		Example: "  sudo panixy apply-conf ~/my-clash.yaml",
+		Example: "  sudo panoxy apply-conf ~/my-clash.yaml",
 		RunE:    runApplyConf,
 	}
 }
@@ -530,9 +553,9 @@ Default secret/ports: secret=deadship, mixed-port=33833, HTTP 9966, SOCKS 6699, 
 
 Read-only, no deploy, no firewall/service changes; no root needed. The clean default copy
 (config.default.yaml, merge-conf's baseline) is maintained by init/deploy/redeploy.`,
-		Example: `  panixy config               # print default config (stdout)
-  panixy config > clash.yaml  # export to a file
-  panixy config --mode tproxy # TPROXY variant`,
+		Example: `  panoxy config               # print default config (stdout)
+  panoxy config > clash.yaml  # export to a file
+  panoxy config --mode tproxy # TPROXY variant`,
 		RunE: runConfig,
 	}
 	c.Flags().String("mode", "tun", "transparent proxy mode: tun | tproxy")
@@ -550,7 +573,7 @@ func cmdFw() *cobra.Command {
   clean    remove all own tables/chains/policy routes (invoked on service stop)`,
 		Args:      cobra.ExactValidArgs(1),
 		ValidArgs: []string{"apply", "clean"},
-		Example:   "  sudo panixy fw apply   # idempotently remount current-mode rules\n  sudo panixy fw clean   # remove all own rules",
+		Example:   "  sudo panoxy fw apply   # idempotently remount current-mode rules\n  sudo panoxy fw clean   # remove all own rules",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// In tproxy mode, apply must load the full rules (reads the state file; defaults to tun).
 			mode := statemode.Read(paths.Get().State)
@@ -577,9 +600,9 @@ func cmdMan() *cobra.Command {
 subcommand's page (e.g. man init, man sub). Prefers rendering via the system man; falls back to
 plain text when no man is available.
 
-After deployment the system man works too: man panixy / man panixy-<command>. --raw emits raw
+After deployment the system man works too: man panoxy / man panoxy-<command>. --raw emits raw
 roff for install-time man generation.`,
-		Example: "  panixy man          # root page\n  panixy man init     # init command page\n  panixy man sub       # sub command page",
+		Example: "  panoxy man          # root page\n  panoxy man init     # init command page\n  panoxy man sub       # sub command page",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir, err := os.MkdirTemp("", constants.ProgName+"-man-")
 			if err != nil {

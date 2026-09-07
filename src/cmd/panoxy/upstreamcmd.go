@@ -65,7 +65,7 @@ kernel baseline. If upstream has moved, it prints a hint — it never auto-merge
 
 The embedded kernel baseline is compiled in (internal/constants.UpstreamMihomoCommit); syncing
 upstream is a manual + AI step (git subtree pull → re-apply panoxy trims → regression).`,
-		Example: `  panixy upstream   # prints "发现上游更新: Alpha @ 65287f0 → <new>, 建议同步" when upstream moved`,
+		Example: `  panoxy upstream   # prints "发现上游更新: Alpha @ 65287f0 → <new>, 建议同步" when upstream moved`,
 		RunE:    runUpstream,
 	}
 	return c

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/deadship2003/panoxy/internal/constants"
 	"github.com/deadship2003/panoxy/internal/logx"
 	"github.com/deadship2003/panoxy/internal/mihomoapi"
 	"github.com/deadship2003/panoxy/internal/paths"
@@ -83,7 +84,7 @@ func action(cur, want string) string {
 // uiUpgrade: download compressed-dist.tgz → swap dir → probe /ui/ → restore the old dir on failure.
 func uiUpgrade(p paths.Paths, proxy, want string) error {
 	logx.Info("UI upgrade: → %s", want)
-	tmp, _ := os.MkdirTemp("", "panixy-ui-")
+	tmp, _ := os.MkdirTemp("", constants.ProgName+"-ui-")
 	defer os.RemoveAll(tmp)
 	tgz := filepath.Join(tmp, "dist.tgz")
 	url := "https://github.com/MetaCubeX/metacubexd/releases/download/" + want + "/compressed-dist.tgz"
