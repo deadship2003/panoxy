@@ -152,12 +152,36 @@ dns:
   fake-ip-range6: 2001:2::1/48 # IPv6 fake-ip pool (RFC 5180 benchmark block); never add 2001:2::/48 to the keep6 whitelist
   prefer-h3: false          # DoH over H2/TCP
   respect-rules: true
+  # Real-IP passthrough for public NTP hosts — exact entries only. mihomo's
+  # fake-ip trie honors leading single-label wildcards ("*.lan" above) but NOT
+  # trailing ones: a literal "ntp.*" matches nothing, public NTP domains get a
+  # 198.18.0.0/16 fake IP, and NTP clients either time out (UDP/123 to a fake
+  # IP has no listener) or sync against the proxy's own clock. Aliyun: ntp +
+  # ntp1..ntp7; Tencent: ntp + ntp1..ntp4 and time1..time5.cloud; Microsoft:
+  # time.windows.com.
   fake-ip-filter:
     - "*.lan"
     - "*.local"
     - "*.direct"
     - time.windows.com
-    - ntp.*
+    - ntp.aliyun.com
+    - ntp1.aliyun.com
+    - ntp2.aliyun.com
+    - ntp3.aliyun.com
+    - ntp4.aliyun.com
+    - ntp5.aliyun.com
+    - ntp6.aliyun.com
+    - ntp7.aliyun.com
+    - ntp.tencent.com
+    - ntp1.tencent.com
+    - ntp2.tencent.com
+    - ntp3.tencent.com
+    - ntp4.tencent.com
+    - time1.cloud.tencent.com
+    - time2.cloud.tencent.com
+    - time3.cloud.tencent.com
+    - time4.cloud.tencent.com
+    - time5.cloud.tencent.com
   default-nameserver:
     - 223.5.5.5
     - 119.29.29.29
