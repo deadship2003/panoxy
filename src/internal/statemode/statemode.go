@@ -5,12 +5,30 @@ package statemode
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
 
 type State struct {
 	ProxyMode string `yaml:"proxy-mode"` // tun | tproxy
+}
+
+// legacyStateName is the state file name used before the program-default rename
+// (commit e5fb3fb: "Panoxy" -> "panoxy"). Hosts deployed in that era still carry
+// the capital-P file in /opt/panoxy while the canonical name is panoxy.yaml.
+const legacyStateName = "Panoxy.yaml"
+
+// migrateLegacy adopts a leftover pre-rename state file as the canonical one,
+// best-effort: on any failure Read() simply falls back to its default path.
+func migrateLegacy(path string) {
+	if _, err := os.Stat(path); err == nil {
+		return // canonical state already exists
+	}
+	legacy := filepath.Join(filepath.Dir(path), legacyStateName)
+	if _, err := os.Stat(legacy); err == nil {
+		_ = os.Rename(legacy, path)
+	}
 }
 
 // Read reads the state; a missing/corrupt file always yields the default (tun) and no
@@ -21,6 +39,7 @@ func Read(path string) string {
 
 // readState returns the full state structure.
 func readState(path string) State {
+	migrateLegacy(path)
 	var st State
 	b, err := os.ReadFile(path)
 	if err != nil {
